@@ -1,3 +1,11 @@
+//////////////////////////////////////
+//
+// AnsiFile.cpp
+//
+// Ilkka Prusi
+// ilkka.prusi@gmail.com
+//
+
 
 //#include "stdafx.h"
 #include "AnsiFile.h"

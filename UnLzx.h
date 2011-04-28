@@ -1,3 +1,12 @@
+//////////////////////////////////////
+//
+// UnLzx.h
+//
+// Ilkka Prusi
+// ilkka.prusi@gmail.com
+//
+
+
 #ifndef _UNLZX_H_
 #define _UNLZX_H_
 

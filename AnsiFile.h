@@ -1,3 +1,10 @@
+//////////////////////////////////////
+//
+// AnsiFile.h
+//
+// Ilkka Prusi
+// ilkka.prusi@gmail.com
+//
 
 #ifndef _ANSIFILE_H_
 #define _ANSIFILE_H_
