@@ -1,12 +1,3 @@
-//////////////////////////////////////
-//
-// mainwindow.h : just GUI-stuff
-//
-// Ilkka Prusi
-// ilkka.prusi@gmail.com
-//
-
-
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 

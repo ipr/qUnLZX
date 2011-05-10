@@ -1,12 +1,3 @@
-//////////////////////////////////////
-//
-// mainwindow.cpp : just GUI-stuff
-//
-// Ilkka Prusi
-// ilkka.prusi@gmail.com
-//
-
-
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 

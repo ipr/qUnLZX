@@ -25,16 +25,181 @@ public:
 class ArcException : public std::exception
 {
 protected:
-	std::string m_szArchive;
+	std::string m_szData;
 public:
-	ArcException(const char *szMessage, const std::string &szArchive)
+	ArcException(const char *szMessage, const std::string &szData)
 		: std::exception(szMessage)
-		, m_szArchive(szArchive)
+		, m_szData(szData)
 	{
 	}
-	std::string GetArchive()
+	/*
+	ArcException(const char *szMessage, const size_t nData)
+		: std::exception(szMessage)
+		, m_szData()
 	{
-		return m_szArchive;
+		// TODO:
+		//m_szData = std::lexical_cast<std::string>(nData);
+		//m_szData = ltoa(nData;
+	}
+	*/
+	std::string GetData()
+	{
+		return m_szData;
+	}
+};
+
+
+class CReadBuffer
+{
+private:
+	enum tSizes
+	{
+		INITIAL_READ_BUFFER_SIZE = 16384
+		//MAX_READ_BUFFER_SIZE = 1024*1024
+	};
+
+	unsigned char *m_pReadBuffer;
+	size_t m_nReadBufferSize;
+	
+	//size_t m_nMaxBufferSize; // limit of growing buffer..
+	//bool m_bKeepExisting; // keep existing data if growing buffer..
+	//bool m_bPageAlign; // page-size aligned allocations
+
+	inline void CreateBuffer(const size_t nMinSize)
+	{
+		// allocate new
+		m_pReadBuffer = new unsigned char[nMinSize];
+		m_nReadBufferSize = nMinSize;
+		::memset(m_pReadBuffer, 0, m_nReadBufferSize);
+	}
+	
+protected:
+	// helpers for users:
+	// user-defined position in buffer
+	// (read/write position)
+	//
+	size_t m_nCurrentPos;
+
+public:
+	CReadBuffer(void) 
+		: m_pReadBuffer(nullptr)
+		, m_nReadBufferSize(0)
+		//, m_nMaxBufferSize(MAX_READ_BUFFER_SIZE)
+		, m_nCurrentPos(0)
+	{
+		CreateBuffer(INITIAL_READ_BUFFER_SIZE);
+	}
+	
+	CReadBuffer(const size_t nMinsize) 
+		: m_pReadBuffer(nullptr)
+		, m_nReadBufferSize(0)
+		//, m_nMaxBufferSize(MAX_READ_BUFFER_SIZE)
+		, m_nCurrentPos(0)
+	{
+		CreateBuffer(nMinsize);
+	}
+	
+	~CReadBuffer(void) 
+	{
+		if (m_pReadBuffer != nullptr)
+		{
+			delete m_pReadBuffer;
+		}
+	}
+
+	// allocate or grow if necessary
+	void PrepareBuffer(const size_t nMinSize, bool bKeepData = true)
+	{
+		if (m_pReadBuffer == nullptr
+			|| m_nReadBufferSize == 0)
+		{
+			// must create new
+			CreateBuffer(nMinSize);
+			return;
+		}
+
+		// growing, do we need this..?
+		if (m_pReadBuffer != nullptr
+			&& m_nReadBufferSize < nMinSize)
+		{
+			size_t nNewSize = nMinSize;
+			/*
+			if (nNewSize > m_nMaxBufferSize)
+			{
+				nNewSize = m_nMaxBufferSize;
+			}
+			*/
+			unsigned char *pNewBuf = new unsigned char[nNewSize];
+			if (bKeepData == true)
+			{
+				memcpy(pNewBuf, m_pReadBuffer, m_nReadBufferSize); // keep existing data
+			}
+			delete m_pReadBuffer; // destroy old smaller
+
+			// keep new buffer
+			m_pReadBuffer = pNewBuf;
+			m_nReadBufferSize = nNewSize;
+		}
+
+		if (bKeepData == false)
+		{
+			// otherwise just clear existing (keep existing)
+			::memset(m_pReadBuffer, 0, m_nReadBufferSize);
+		}
+	}
+
+
+	// note: don't make it const:
+	// allow modify to read into it..
+	//
+	unsigned char *GetBegin()
+	{
+		return m_pReadBuffer;
+	}
+	
+	// reduce repeated code -> count end ptr
+	unsigned char *GetEnd()
+	{
+		return m_pReadBuffer + m_nReadBufferSize;
+	}
+
+	// reduce repeated code -> count to given offset from start
+	unsigned char *GetAt(const size_t nOffset)
+	{
+		return m_pReadBuffer + nOffset;
+	}
+	
+	// current allocation
+	//
+	size_t GetSize() const
+	{
+		return m_nReadBufferSize;
+	}
+
+	// user-defined position in buffer
+	// (read/write position)
+	size_t GetCurrentPos() const
+	{
+		return m_nCurrentPos;
+	}
+	void SetCurrentPos(const size_t nCurrentPos)
+	{
+		m_nCurrentPos = nCurrentPos;
+	}
+	
+	// copy given, start at current
+	bool Append(unsigned char *pData, size_t nSize)
+	{
+		if (nSize > (m_nReadBufferSize - m_nCurrentPos))
+		{
+			// not enough space in buffer
+			return false;
+		}
+		
+		unsigned char *pBuf = GetAt(m_nCurrentPos);
+		memcpy(pBuf, pData, nSize);
+		m_nCurrentPos += nSize;
+		return true;
 	}
 };
 

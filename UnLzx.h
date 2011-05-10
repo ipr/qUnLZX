@@ -6,13 +6,13 @@
 // ilkka.prusi@gmail.com
 //
 
-
 #ifndef _UNLZX_H_
 #define _UNLZX_H_
 
 #include <string>
-#include <list>
+//#include <list>
 #include <map>
+#include <set>
 
 #include "AnsiFile.h"
 
@@ -47,7 +47,8 @@ struct tLzxArchiveHeader
 		::memset(archive_header, 0, sizeof(unsigned char)*31);
 	}
 
-	// CRC in header (including filename, comment etc.)
+	// CRC in header (including filename, comment etc.):
+	// set to zero before counting CRC of this part
 	unsigned int TakeCrcBytes()
 	{
 		unsigned int crc = (archive_header[29] << 24) + (archive_header[28] << 16) + (archive_header[27] << 8) + archive_header[26];
@@ -116,6 +117,41 @@ struct tLzxArchiveHeader
 	}
 };
 
+// fwd. decl.
+class CArchiveEntry;
+
+class CMergeGroup
+{
+public:
+	CMergeGroup(void) 
+		: m_MergedList()
+		, m_lGroupOffset(0)
+	{};
+	~CMergeGroup(void) 
+	{
+		// don't delete objects, 
+		// destroyed elsewhere.
+		m_MergedList.clear();
+	};
+	
+	typedef std::set<CArchiveEntry*> tMergedList;
+	tMergedList m_MergedList;
+
+	// offset in archive file
+	// to beginning of this group of merged files.
+	long m_lGroupOffset;
+	
+	// add entry as member of this group
+	void SetEntry(CArchiveEntry *pEntry)
+	{
+		auto it = m_MergedList.find(pEntry);
+		if (it == m_MergedList.end())
+		{
+			m_MergedList.insert(tMergedList::value_type(pEntry));
+		}
+	}
+};
+
 // describe single entry within LZX-archive
 class CArchiveEntry
 {
@@ -153,6 +189,7 @@ public:
 	CArchiveEntry(void)
 		: m_Attributes()
 		, m_Header()
+		, m_pGroup(nullptr)
 		, m_uiCrc(0)
 		, m_uiDataCrc(0)
 		, m_ulUnpackedSize(0)
@@ -193,9 +230,18 @@ public:
 			m_bIsMerged = true;
 		}
 	}
+	void SetGroup(CMergeGroup *pGroup)
+	{
+		// keep group and set as member of it
+		m_pGroup = pGroup;
+		pGroup->SetEntry(this);
+	}
 
 	// entry header from archive
 	tLzxArchiveHeader m_Header;
+	
+	// merge group this belongs to (if any)
+	CMergeGroup *m_pGroup;
 
 	// CRC from file header
 	unsigned int m_uiCrc;
@@ -206,8 +252,8 @@ public:
 	// unpacked size from file
 	unsigned long m_ulUnpackedSize;
 
-	// for some text-files, packed size might not be given in archive
-	// (merged only?)
+	// for some files, packed size might not be given in archive
+	// (merged files only?)
 	bool m_bPackedSizeAvailable;
 
 	// compressed size from file
@@ -228,84 +274,32 @@ public:
 	std::string m_szComment;
 };
 
+// list of each merged-file group in single archive
+// key: offset in archive-file to group (internal use)
+// value: description of group
+typedef std::map<long, CMergeGroup> tMergeGroupList;
+
 // list of each entry in single archive
 // key: offset in archive-file to entry (internal use)
 // value: description of entry
 typedef std::map<long, CArchiveEntry> tArchiveEntryList;
 
-/*
+/*  moved to CAnsiFile.
 class CReadBuffer
+*/
+
+/* // TODO: move crc-summing to own class
+class CRCSum
 {
-private:
-	typedef enum tConstants
-	{
-		INITIAL_READ_BUFFER_SIZE = 16384,
-		MAX_READ_BUFFER_SIZE = 1024*1024
-	};
+	static const unsigned int g_crc_table[256];
+	inline void crc_calc(const unsigned char *memory, unsigned int length, unsigned int &sum) const;
+	
+};
+*/
 
-	unsigned char *m_pReadBuffer;
-	unsigned long m_ulReadBufferSize;
-
-	// allocate or grow if necessary
-	inline void PrepareBuffer(const unsigned long ulMinSize)
-	{
-		if (m_pReadBuffer == nullptr
-			|| m_ulReadBufferSize == 0)
-		{
-			m_pReadBuffer = new unsigned char[ulMinSize];
-			m_ulReadBufferSize = ulMinSize;
-			::memset(m_pReadBuffer, 0, m_ulReadBufferSize);
-			return;
-		}
-		else if (m_ulReadBufferSize < ulMinSize)
-		{
-			unsigned long ulNewSize = ulMinSize;
-			if (ulNewSize > MAX_READ_BUFFER_SIZE)
-			{
-				ulNewSize = MAX_READ_BUFFER_SIZE;
-			}
-
-			// create larger
-			unsigned char *pNewBuffer = new unsigned char[ulNewSize];
-
-			// copy old to new (can we skip this?)
-			::memcpy(pNewBuffer, m_pReadBuffer, m_ulReadBufferSize);
-
-			delete m_pReadBuffer; // destroy old smaller
-
-			// keep new larger buffer
-			m_pReadBuffer = pNewBuffer;
-			m_ulReadBufferSize = ulNewSize;
-
-			// can we just clear it all?
-			//::memset(m_pReadBuffer, 0, m_ulReadBufferSize);
-			return;
-		}
-		else
-		{
-			// just clear the buffer
-			// (do we need this?)
-			::memset(m_pReadBuffer, 0, m_ulReadBufferSize);
-		}
-	}
-
-public:
-	CReadBuffer(void) 
-		: m_pReadBuffer(nullptr)
-		, m_ulReadBufferSize(0)
-	{
-		PrepareBuffer(INITIAL_READ_BUFFER_SIZE);
-	};
-	~CReadBuffer(void) {};
-
-	unsigned long GetBufferSize()
-	{
-		return m_ulReadBufferSize;
-	}
-	unsigned char *GetBuffer()
-	{
-		return m_pReadBuffer;
-	}
+/* // TODO: move actual decoding to own class (per compression type)
+class CDecoder
+{
 };
 */
 
@@ -316,9 +310,15 @@ private:
 	std::string m_szArchive; // path and name of archive-file
 	size_t m_nFileSize; // filesize of archive in bytes
 
+	// internal buffer for read information
+	CReadBuffer m_ReadBuffer;
+	
 	// archive info-header (file-type etc.)
 	tLzxInfoHeader m_InfoHeader;
 
+	// list of merged-file groups in archive
+	tMergeGroupList m_GroupList;
+	
 	// list of items in archive (files)
 	tArchiveEntryList m_EntryList;
 
@@ -328,6 +328,7 @@ private:
 	std::string m_szExtractionPath;
 
 	// current sizes for extraction
+	// (need to share for merged groups)
 	unsigned int m_pack_size;
 	//unsigned int m_unpack_size;
 
@@ -391,11 +392,12 @@ public:
 	CUnLzx(const std::string &szArchive)
 		: m_szArchive(szArchive)
 		, m_nFileSize(0)
+		, m_ReadBuffer()
 		, m_InfoHeader()
+		, m_GroupList()
 		, m_EntryList()
 		, m_szExtractionPath()
 		, m_pack_size(0)
-		//, m_unpack_size(0)
 		, m_ulTotalUnpacked(0)
 		, m_ulTotalPacked(0)
 		, m_ulTotalFiles(0)
@@ -404,7 +406,10 @@ public:
 	}
 
 	~CUnLzx(void)
-	{}
+	{
+		m_GroupList.clear();
+		m_EntryList.clear();
+	}
 
 	// view a single archive:
 	// get archive metadata
