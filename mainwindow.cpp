@@ -210,10 +210,6 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 				pSubItem->setText(2, "(Merged)");
 			}
 			
-			unsigned int year, month, day;
-			unsigned int hour, minute, second;
-			Entry.m_Header.GetTimestampParts(year, month, day, hour, minute, second);
-
 			/*
 			QDateTime Stamp;
 			Stamp.setDate(QDate(year, month, day));
@@ -221,12 +217,18 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 			*/
 
 			QString szTime;
-			szTime.sprintf("%02ld:%02ld:%02ld", hour, minute, second);
+			szTime.sprintf("%02ld:%02ld:%02ld", 
+						   Entry.m_Timestamp.hour, 
+						   Entry.m_Timestamp.minute, 
+						   Entry.m_Timestamp.second);
 			pSubItem->setText(3, szTime);
 			//pSubItem->setText(3, QTime(hour, minute, second).toString());
 
 			QString szDate;
-			szDate.sprintf("%.2ld-%.2ld-%4ld", day, month, year);
+			szDate.sprintf("%.2ld-%.2ld-%4ld", 
+						   Entry.m_Timestamp.day, 
+						   Entry.m_Timestamp.month, 
+						   Entry.m_Timestamp.year);
 			pSubItem->setText(4, szDate);
 			//pSubItem->setText(4, QDate(year, month, day).toString());
 

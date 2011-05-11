@@ -48,28 +48,33 @@ struct tLzxInfoHeader
 		}
 		return false;
 	}
+	bool IsDamageProtect()
+	{
+		if ((info_header[3] & (int)INFO_DAMAGE_PROTECT) != 0)
+		{
+			return true;
+		}
+		return false;
+	}
+	bool IsLocked()
+	{
+		if ((info_header[3] & (int)INFO_FLAG_LOCKED) != 0)
+		{
+			return true;
+		}
+		return false;
+	}
 };
 
 // header of single entry in LZX-archive
 struct tLzxArchiveHeader
 {
-	/*
 	enum tHeaderFlag
 	{
 		HDR_FLAG_MERGED = 1
 	};
-	enum tHeaderProt
-	{
-		HDR_PROT_READ    = 1,
-		HDR_PROT_WRITE   = 2,
-		HDR_PROT_DELETE  = 4,
-		HDR_PROT_EXECUTE = 8,
-		HDR_PROT_ARCHIVE = 16,
-		HDR_PROT_HOLD    = 32,
-		HDR_PROT_SCRIPT  = 64,
-		HDR_PROT_PURE    = 128
-	};
-	enum tHeaderType
+
+	enum tHeaderMachineType
 	{
 		HDR_TYPE_MSDOS   = 0,
 		HDR_TYPE_WINDOWS = 1,
@@ -77,13 +82,14 @@ struct tLzxArchiveHeader
 		HDR_TYPE_AMIGA   = 10,
 		HDR_TYPE_UNIX    = 20
 	};
-	enum tHeaderPack
+
+	// file-entry packing mode
+	enum tHeaderPackMode
 	{
 		HDR_PACK_STORE    = 0,
 		HDR_PACK_NORMAL   = 2,
 		HDR_PACK_EOF      = 32
 	};
-	*/
 	
 	/* STRUCTURE Archive_Header
 	{
@@ -137,9 +143,19 @@ struct tLzxArchiveHeader
 		return archive_header[0]; /* file protection modes */
 	}
 
+	unsigned char GetMachineType()
+	{
+		return archive_header[10]; /* machine type */
+	}
+	
 	unsigned char GetPackMode()
 	{
 		return archive_header[11]; /* pack mode */
+	}
+	
+	unsigned char GetFlags()
+	{
+		return archive_header[12]; /* flags */
 	}
 
 	unsigned int GetFileNameLength()
@@ -162,6 +178,31 @@ struct tLzxArchiveHeader
 		return (archive_header[5] << 24) + (archive_header[4] << 16) + (archive_header[3] << 8) + archive_header[2]; /* unpack size */
 	}
 
+
+	/* STRUCTURE DATE_Unpacked
+	{
+	  UBYTE year; 80 - Year 0=1970 1=1971 63=2033
+	  UBYTE month; 81 - 0=january 1=february .. 11=december
+	  UBYTE day; 82
+	  UBYTE hour; 83
+	  UBYTE minute; 84
+	  UBYTE second; 85
+	} */ /* SIZE = 6 */
+	
+	/* STRUCTURE DATE_Packed
+	{
+	  UBYTE packed[4]; bit 0 is MSB, 31 is LSB
+	; bit # 0-4=Day 5-8=Month 9-14=Year 15-19=Hour 20-25=Minute 26-31=Second
+	} */ /* SIZE = 4 */
+	
+	unsigned int GetPackedTimestamp()
+	{
+		return (archive_header[18] << 24) + (archive_header[19] << 16) + (archive_header[20] << 8) + archive_header[21]; /* date */
+	}
+};
+
+typedef struct PackedTimestamp
+{
 	/*
 	enum tDateShift
 	{
@@ -182,41 +223,112 @@ struct tLzxArchiveHeader
 		DATE_MASK_SECOND  = 0x0000003F
 	};
 	*/
-
-	/* STRUCTURE DATE_Unpacked
-	{
-	  UBYTE year; 80 - Year 0=1970 1=1971 63=2033
-	  UBYTE month; 81 - 0=january 1=february .. 11=december
-	  UBYTE day; 82
-	  UBYTE hour; 83
-	  UBYTE minute; 84
-	  UBYTE second; 85
-	} */ /* SIZE = 6 */
 	
-	/* STRUCTURE DATE_Packed
-	{
-	  UBYTE packed[4]; bit 0 is MSB, 31 is LSB
-	; bit # 0-4=Day 5-8=Month 9-14=Year 15-19=Hour 20-25=Minute 26-31=Second
-	} */ /* SIZE = 4 */
+	// "as-is"
+	unsigned int m_uiTimeStamp;
 	
-	unsigned int GetTimestamp()
+	// unpacked
+	unsigned int year;
+	unsigned int month;
+	unsigned int day;
+	unsigned int hour;
+	unsigned int minute;
+	unsigned int second;
+	
+	PackedTimestamp(void)
 	{
-		return (archive_header[18] << 24) + (archive_header[19] << 16) + (archive_header[20] << 8) + archive_header[21]; /* date */
+		m_uiTimeStamp = 0;
+		year = 0;
+		month = 0;
+		day = 0;
+		hour = 0;
+		minute = 0;
+		second = 0;
 	}
-
-	void GetTimestampParts(unsigned int &year, unsigned int &month, unsigned int &day, unsigned int &hour, unsigned int &minute, unsigned int &second)
+	
+	void SetParseStamp(const unsigned int uiPackedStamp)
 	{
-		unsigned int temp = GetTimestamp();
-
+		m_uiTimeStamp = uiPackedStamp;
+		
 		// split value into timestamp-parts
-		year = ((temp >> 17) & 63) + 1970;
-		month = (temp >> 23) & 15;
-		day = (temp >> 27) & 31;
-		hour = (temp >> 12) & 31;
-		minute = (temp >> 6) & 63;
-		second = temp & 63;
+		year = ((uiPackedStamp >> 17) & 63) + 1970;
+		month = (uiPackedStamp >> 23) & 15;
+		day = (uiPackedStamp >> 27) & 31;
+		hour = (uiPackedStamp >> 12) & 31;
+		minute = (uiPackedStamp >> 6) & 63;
+		second = uiPackedStamp & 63;
 	}
-};
+	
+} PackedTimestamp;
+
+// these match Amiga-style file-attributes
+// (protection mode flags):
+// HSPA RWED
+typedef struct FileAttributes
+{
+	// protection flags
+	enum tHeaderProt
+	{
+		HDR_PROT_READ    = 1,
+		HDR_PROT_WRITE   = 2,
+		HDR_PROT_DELETE  = 4,
+		HDR_PROT_EXECUTE = 8,
+		HDR_PROT_ARCHIVE = 16,
+		HDR_PROT_HOLD    = 32,
+		HDR_PROT_SCRIPT  = 64,
+		HDR_PROT_PURE    = 128
+	};
+	
+	// protection flags "as-is"
+	unsigned char m_ucAttribs;
+
+	// parsed file-protection flags
+	bool h; // 'hidden'
+	bool s; // 'script'
+	bool p; // 'pure' (can be made resident in-memory)
+	bool a; // 'archived'
+	bool r; // 'readable'
+	bool w; // 'writable'
+	bool e; // 'executable'
+	bool d; // 'delete'
+	
+	// constructor
+	FileAttributes(void)
+	{
+		h = false;
+		s = false;
+		p = false;
+		a = false;
+
+		r = false;
+		w = false;
+		e = false;
+		d = false;
+		m_ucAttribs = 0;
+	}
+
+	// constructor
+	FileAttributes(const unsigned char ucAttribs)
+	{
+		ParseAttributes(ucAttribs);
+	}
+	
+	/* parse file protection modes */
+	void ParseAttributes(const unsigned char ucAttribs)
+	{
+		m_ucAttribs = ucAttribs;
+		h = ((m_ucAttribs & (int)HDR_PROT_HOLD)    ? true : false);
+		s = ((m_ucAttribs & (int)HDR_PROT_SCRIPT)  ? true : false);
+		p = ((m_ucAttribs & (int)HDR_PROT_PURE)    ? true : false);
+		a = ((m_ucAttribs & (int)HDR_PROT_ARCHIVE) ? true : false);
+		r = ((m_ucAttribs & (int)HDR_PROT_READ)    ? true : false);
+		w = ((m_ucAttribs & (int)HDR_PROT_WRITE)   ? true : false);
+		e = ((m_ucAttribs & (int)HDR_PROT_EXECUTE) ? true : false);
+		d = ((m_ucAttribs & (int)HDR_PROT_DELETE)  ? true : false);
+	}
+	
+} FileAttributes;
+
 
 // fwd. decl.
 class CArchiveEntry;
@@ -257,80 +369,84 @@ public:
 class CArchiveEntry
 {
 public:
-	// these match Amiga-style file-attributes
-	// (protection mode flags):
-	// HSPA RWED
-	struct tFileAttributes
-	{
-		tFileAttributes()
-		{
-			h = false;
-			s = false;
-			p = false;
-			a = false;
-
-			r = false;
-			w = false;
-			e = false;
-			d = false;
-		}
-
-		bool h; // 'hidden'
-		bool s; // 'script'
-		bool p; // 'pure' (can be made resident in-memory)
-		bool a; // 'archived'
-		bool r; // 'readable'
-		bool w; // 'writable'
-		bool e; // 'executable'
-		bool d; // 'delete'
-	};
-	struct tFileAttributes m_Attributes;
-
-public:
 	CArchiveEntry(void)
-		: m_Attributes()
-		, m_Header()
-		, m_pGroup(nullptr)
+		: m_Header()
+		, m_Attributes()
+		, m_Timestamp()
+		, m_MachineType(tLzxArchiveHeader::HDR_TYPE_AMIGA)
+		, m_PackMode(tLzxArchiveHeader::HDR_PACK_EOF)
+		, m_bIsMerged(false)
 		, m_uiCrc(0)
 		, m_uiDataCrc(0)
 		, m_ulUnpackedSize(0)
 		, m_bPackedSizeAvailable(true)
 		, m_ulPackedSize(0)
-		, m_bIsMerged(false)
+		, m_pGroup(nullptr)
 		, m_bIsExtracted(false)
 		, m_szFileName()
 		, m_szComment()
 	{}
 	~CArchiveEntry(void)
 	{}
-
-	/* file protection modes */
-	void ParseAttributes()
+	
+	void ParseHeader()
 	{
-		unsigned char attrib = m_Header.GetAttributes();
-		m_Attributes.h = ((attrib & 32) ? true : false);
-		m_Attributes.s = ((attrib & 64) ? true : false);
-		m_Attributes.p = ((attrib & 128) ? true : false);
-		m_Attributes.a = ((attrib & 16) ? true : false);
-		m_Attributes.r = ((attrib & 1) ? true : false);
-		m_Attributes.w = ((attrib & 2) ? true : false);
-		m_Attributes.e = ((attrib & 8) ? true : false);
-		m_Attributes.d = ((attrib & 4) ? true : false);
-	};
-	void HandlePackingSizes()
-	{
+		// keep data-CRC for easy handling
+		m_uiDataCrc = m_Header.GetDataCrc();
+		
+		// file protection modes
+		m_Attributes.ParseAttributes(m_Header.GetAttributes());
+		
+		// packing information
 		m_ulUnpackedSize = m_Header.GetUnpackSize();
 		m_ulPackedSize = m_Header.GetPackSize();
+		
+		m_Timestamp.SetParseStamp(m_Header.GetPackedTimestamp());
 
-		if (m_Header.archive_header[12] & 1)
+		unsigned char ucMachine = m_Header.GetMachineType();
+		if (ucMachine & tLzxArchiveHeader::HDR_TYPE_AMIGA)
+		{
+			m_MachineType = tLzxArchiveHeader::HDR_TYPE_AMIGA;
+		}
+		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_UNIX)
+		{
+			m_MachineType = tLzxArchiveHeader::HDR_TYPE_UNIX;
+		}
+		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_OS2)
+		{
+			m_MachineType = tLzxArchiveHeader::HDR_TYPE_OS2;
+		}
+		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_WINDOWS)
+		{
+			m_MachineType = tLzxArchiveHeader::HDR_TYPE_WINDOWS;
+		}
+		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_MSDOS)
+		{
+			m_MachineType = tLzxArchiveHeader::HDR_TYPE_MSDOS;
+		}
+		
+		unsigned char ucPackMode = m_Header.GetPackMode();
+		if (ucPackMode & tLzxArchiveHeader::HDR_PACK_NORMAL)
+		{
+			m_PackMode = tLzxArchiveHeader::HDR_PACK_NORMAL;
+		}
+		else if (ucPackMode & tLzxArchiveHeader::HDR_PACK_STORE)
+		{
+			m_PackMode = tLzxArchiveHeader::HDR_PACK_STORE;
+		}
+		else if (ucPackMode & tLzxArchiveHeader::HDR_PACK_EOF)
+		{
+			m_PackMode = tLzxArchiveHeader::HDR_PACK_EOF;
+		}
+		
+		unsigned char ucFlags = m_Header.GetFlags();
+		if (ucFlags & tLzxArchiveHeader::HDR_FLAG_MERGED)
 		{
 			m_bPackedSizeAvailable = false;
-		}
-		if ((m_Header.archive_header[12] & 1) && m_ulPackedSize)
-		{
 			m_bIsMerged = true;
 		}
 	}
+	
 	void SetGroup(CMergeGroup *pGroup)
 	{
 		// keep group and set as member of it
@@ -341,8 +457,21 @@ public:
 	// entry header from archive
 	tLzxArchiveHeader m_Header;
 	
-	// merge group this belongs to (if any)
-	CMergeGroup *m_pGroup;
+	// file attributes of entry
+	FileAttributes m_Attributes;
+	
+	// timestamp of entry
+	PackedTimestamp m_Timestamp;
+
+	// machine type where archive is created
+	tLzxArchiveHeader::tHeaderMachineType m_MachineType;
+	
+	// packing mode
+	tLzxArchiveHeader::tHeaderPackMode m_PackMode;
+
+	// if file is merged with another
+	bool m_bIsMerged;
+	
 
 	// CRC from file header
 	unsigned int m_uiCrc;
@@ -360,8 +489,9 @@ public:
 	// compressed size from file
 	unsigned long m_ulPackedSize;
 
-	// if file is merged with another
-	bool m_bIsMerged;
+	
+	// merge group this belongs to (if any)
+	CMergeGroup *m_pGroup;
 
 	// is file already extracted
 	// TODO: this is quick hack, 
@@ -415,6 +545,8 @@ public:
 	unsigned char *source_end;
 	unsigned char *destination_end;
 
+	unsigned char *m_pos;
+	
 protected:
 
 	inline unsigned int reverse_position(const unsigned int fill_size, const unsigned int reverse_pos)
@@ -519,6 +651,7 @@ public:
 		source_end = source - 1024;
 		destination = pDecrunchBuffer + 258 + 65536;
 		destination_end = destination;
+		m_pos = destination;
 		
 		return destination_end;
 	}
@@ -526,6 +659,40 @@ public:
 	int make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table);
 	int read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch_method, unsigned int &decrunch_length);
 	void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method, unsigned char *pdecrunchbuffer);
+
+	unsigned int unpack(unsigned char *pdecrunchbuffer, unsigned int &decrunch_length)
+	{
+		unsigned int count = 0;
+		
+		/* unpack some data */
+		if (destination >= pdecrunchbuffer + 258 + 65536)
+		{
+			count = (destination - pdecrunchbuffer) - 65536;
+			if (count)
+			{
+				destination = pdecrunchbuffer;
+				
+				unsigned char *temp = destination + 65536;
+				/* copy the overrun to the start of the buffer */
+				// note: in theory could replace loop with
+				// ::memcpy(destination, temp, count);
+				// but may overlap memory areas so can't use memcpy()..
+				do
+				{
+					*destination++ = *temp++;
+				} while(--count);
+			}
+			m_pos = destination;
+		}
+		
+		destination_end = destination + decrunch_length;
+		if (destination_end > pdecrunchbuffer + 258 + 65536)
+		{
+			destination_end = pdecrunchbuffer + 258 + 65536;
+		}
+		
+		return count;
+	}
 	
 };
 

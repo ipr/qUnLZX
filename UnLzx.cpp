@@ -487,9 +487,6 @@ bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 	Entry.m_uiCrc = Entry.m_Header.TakeCrcBytes();
 	CrcSum.crc_calc(Entry.m_Header.archive_header, 31);
 
-	// keep data-CRC for easy handling
-	Entry.m_uiDataCrc = Entry.m_Header.GetDataCrc();
-
 	// zeroize buffer
 	m_ReadBuffer.PrepareBuffer(256, false);
 	unsigned char *pBuf = m_ReadBuffer.GetBegin();
@@ -528,8 +525,7 @@ bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 	}
 
 	// parse some entry-header information for later processing
-	Entry.ParseAttributes();	// file protection modes
-	Entry.HandlePackingSizes(); // packed/unpacked and merge-cases
+	Entry.ParseHeader();
 	
 	// entry header read
 	return true;
@@ -688,30 +684,8 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 				}
 				
 				/* unpack some data */
-				if(m_Decoder.destination >= pdecrunchbuffer + 258 + 65536)
-				{
-					count = (m_Decoder.destination - pdecrunchbuffer) - 65536;
-					if(count)
-					{
-						m_Decoder.destination = pdecrunchbuffer;
-						unsigned char *temp = m_Decoder.destination + 65536;
-						/* copy the overrun to the start of the buffer */
-						// note: in theory could replace loop with
-						// ::memcpy(destination, temp, count);
-						// but may overlap memory areas so can't use memcpy()..
-						do
-						{
-							*m_Decoder.destination++ = *temp++;
-						} while(--count);
-					}
-					pos = m_Decoder.destination;
-				}
-				
-				m_Decoder.destination_end = m_Decoder.destination + m_decrunch_length;
-				if (m_Decoder.destination_end > pdecrunchbuffer + 258 + 65536)
-				{
-					m_Decoder.destination_end = pdecrunchbuffer + 258 + 65536;
-				}
+				count = m_Decoder.unpack(pdecrunchbuffer, m_decrunch_length);
+				pos = m_Decoder.destination;
 				
 				unsigned char *temp = m_Decoder.destination;
 
@@ -897,10 +871,10 @@ bool CUnLzx::ExtractArchive()
 		AddCounters(itEntry->second);
 
 		/* seek past the packed data */
-		m_pack_size = itEntry->second.m_Header.GetPackSize();
-		if (m_pack_size != 0)
+		if (itEntry->second.m_Header.GetPackSize() != 0)
 		{
 			bool bRet = false;
+			m_pack_size = itEntry->second.m_Header.GetPackSize();
 			switch (itEntry->second.m_Header.GetPackMode())
 			{
 			case 0: /* store */
@@ -915,6 +889,7 @@ bool CUnLzx::ExtractArchive()
 			}
 
 			// in case of merged files, need to seek data from next entry
+			// -> seek past this data
 			if (ArchiveFile.Seek(m_pack_size, SEEK_CUR) == false)
 			{
 				throw IOException("FSeek(Data): failed to seek past packed data");
