@@ -11,72 +11,6 @@
 
 #include "UnLzx.h"
 
-// table for 32-bit CRC calculating
-static const unsigned int g_crc_table[256]=
-{
- 0x00000000,0x77073096,0xEE0E612C,0x990951BA,0x076DC419,0x706AF48F,
- 0xE963A535,0x9E6495A3,0x0EDB8832,0x79DCB8A4,0xE0D5E91E,0x97D2D988,
- 0x09B64C2B,0x7EB17CBD,0xE7B82D07,0x90BF1D91,0x1DB71064,0x6AB020F2,
- 0xF3B97148,0x84BE41DE,0x1ADAD47D,0x6DDDE4EB,0xF4D4B551,0x83D385C7,
- 0x136C9856,0x646BA8C0,0xFD62F97A,0x8A65C9EC,0x14015C4F,0x63066CD9,
- 0xFA0F3D63,0x8D080DF5,0x3B6E20C8,0x4C69105E,0xD56041E4,0xA2677172,
- 0x3C03E4D1,0x4B04D447,0xD20D85FD,0xA50AB56B,0x35B5A8FA,0x42B2986C,
- 0xDBBBC9D6,0xACBCF940,0x32D86CE3,0x45DF5C75,0xDCD60DCF,0xABD13D59,
- 0x26D930AC,0x51DE003A,0xC8D75180,0xBFD06116,0x21B4F4B5,0x56B3C423,
- 0xCFBA9599,0xB8BDA50F,0x2802B89E,0x5F058808,0xC60CD9B2,0xB10BE924,
- 0x2F6F7C87,0x58684C11,0xC1611DAB,0xB6662D3D,0x76DC4190,0x01DB7106,
- 0x98D220BC,0xEFD5102A,0x71B18589,0x06B6B51F,0x9FBFE4A5,0xE8B8D433,
- 0x7807C9A2,0x0F00F934,0x9609A88E,0xE10E9818,0x7F6A0DBB,0x086D3D2D,
- 0x91646C97,0xE6635C01,0x6B6B51F4,0x1C6C6162,0x856530D8,0xF262004E,
- 0x6C0695ED,0x1B01A57B,0x8208F4C1,0xF50FC457,0x65B0D9C6,0x12B7E950,
- 0x8BBEB8EA,0xFCB9887C,0x62DD1DDF,0x15DA2D49,0x8CD37CF3,0xFBD44C65,
- 0x4DB26158,0x3AB551CE,0xA3BC0074,0xD4BB30E2,0x4ADFA541,0x3DD895D7,
- 0xA4D1C46D,0xD3D6F4FB,0x4369E96A,0x346ED9FC,0xAD678846,0xDA60B8D0,
- 0x44042D73,0x33031DE5,0xAA0A4C5F,0xDD0D7CC9,0x5005713C,0x270241AA,
- 0xBE0B1010,0xC90C2086,0x5768B525,0x206F85B3,0xB966D409,0xCE61E49F,
- 0x5EDEF90E,0x29D9C998,0xB0D09822,0xC7D7A8B4,0x59B33D17,0x2EB40D81,
- 0xB7BD5C3B,0xC0BA6CAD,0xEDB88320,0x9ABFB3B6,0x03B6E20C,0x74B1D29A,
- 0xEAD54739,0x9DD277AF,0x04DB2615,0x73DC1683,0xE3630B12,0x94643B84,
- 0x0D6D6A3E,0x7A6A5AA8,0xE40ECF0B,0x9309FF9D,0x0A00AE27,0x7D079EB1,
- 0xF00F9344,0x8708A3D2,0x1E01F268,0x6906C2FE,0xF762575D,0x806567CB,
- 0x196C3671,0x6E6B06E7,0xFED41B76,0x89D32BE0,0x10DA7A5A,0x67DD4ACC,
- 0xF9B9DF6F,0x8EBEEFF9,0x17B7BE43,0x60B08ED5,0xD6D6A3E8,0xA1D1937E,
- 0x38D8C2C4,0x4FDFF252,0xD1BB67F1,0xA6BC5767,0x3FB506DD,0x48B2364B,
- 0xD80D2BDA,0xAF0A1B4C,0x36034AF6,0x41047A60,0xDF60EFC3,0xA867DF55,
- 0x316E8EEF,0x4669BE79,0xCB61B38C,0xBC66831A,0x256FD2A0,0x5268E236,
- 0xCC0C7795,0xBB0B4703,0x220216B9,0x5505262F,0xC5BA3BBE,0xB2BD0B28,
- 0x2BB45A92,0x5CB36A04,0xC2D7FFA7,0xB5D0CF31,0x2CD99E8B,0x5BDEAE1D,
- 0x9B64C2B0,0xEC63F226,0x756AA39C,0x026D930A,0x9C0906A9,0xEB0E363F,
- 0x72076785,0x05005713,0x95BF4A82,0xE2B87A14,0x7BB12BAE,0x0CB61B38,
- 0x92D28E9B,0xE5D5BE0D,0x7CDCEFB7,0x0BDBDF21,0x86D3D2D4,0xF1D4E242,
- 0x68DDB3F8,0x1FDA836E,0x81BE16CD,0xF6B9265B,0x6FB077E1,0x18B74777,
- 0x88085AE6,0xFF0F6A70,0x66063BCA,0x11010B5C,0x8F659EFF,0xF862AE69,
- 0x616BFFD3,0x166CCF45,0xA00AE278,0xD70DD2EE,0x4E048354,0x3903B3C2,
- 0xA7672661,0xD06016F7,0x4969474D,0x3E6E77DB,0xAED16A4A,0xD9D65ADC,
- 0x40DF0B66,0x37D83BF0,0xA9BCAE53,0xDEBB9EC5,0x47B2CF7F,0x30B5FFE9,
- 0xBDBDF21C,0xCABAC28A,0x53B39330,0x24B4A3A6,0xBAD03605,0xCDD70693,
- 0x54DE5729,0x23D967BF,0xB3667A2E,0xC4614AB8,0x5D681B02,0x2A6F2B94,
- 0xB40BBE37,0xC30C8EA1,0x5A05DF1B,0x2D02EF8D
-};
-
-/* Possible problems with 64 bit machines here. It kept giving warnings   */
-/* for people so I changed back to ~.                                     */
-inline void crc_calc(const unsigned char *memory, unsigned int length, unsigned int &sum)
-{
-	// putting more likely case first seems to be 
-	// most efficient for CPU branch-prediction 
-	// when 'likely' keyword isn't supported..
-	// -> changed back
-	if (length)
-	{
-		unsigned int temp = ~sum; /* was (sum ^ 4294967295) */
-		do
-		{
-			temp = g_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
-		} while(--length);
-		sum = ~temp; /* was (temp ^ 4294967295) */
-	}
-}
 
 
 // TODO: make buffers variable in size..
@@ -91,9 +25,6 @@ unsigned char *destination_end;
 
 unsigned int g_decrunch_method = 0;
 unsigned int g_decrunch_length = 0;
-//unsigned int g_last_offset = 1;
-unsigned int g_global_control = 0; /* initial control word */
-int g_global_shift = -16;
 
 unsigned char offset_len[8];
 unsigned short offset_table[128];
@@ -124,12 +55,15 @@ static const unsigned char table_four[34]=
  0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
 };
 
-// (TODO: can we inline __stdcall / cdecl functions like this or only within class.. ?)
-// seems supported, no guarantee though..
-inline unsigned int reverse_position(unsigned int &fill, unsigned int &reverse)
+
+/* reverse the order of the position's bits */
+inline unsigned int reverse_position(const unsigned int fill_size, const unsigned int reverse_pos)
 {
-	/* reverse the position */
+	unsigned int fill = fill_size;
+	unsigned int reverse = reverse_pos;
 	unsigned int leaf = 0; /* always starts at zero */
+	
+	/* reverse the position */
 	do
 	{
 		leaf = (leaf << 1) + (reverse & 1);
@@ -142,42 +76,30 @@ inline unsigned int reverse_position(unsigned int &fill, unsigned int &reverse)
 
 /* Build a fast huffman decode table from the symbol bit lengths.         */
 /* There is an alternate algorithm which is faster but also more complex. */
-
 int make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table)
 {
-	// "register" keyword is mostly ignored in modern compilers..
-	//int symbol = 0; // always reset at start of scope.. -> make scoped
-	//unsigned int leaf; // always reset at start of scope -> make scoped
-	unsigned int table_mask, bit_mask, pos, fill, next_symbol, reverse;
 	unsigned char bit_num = 1; // truly start at 1 (skip one increment..)
-	
-	int abort = 0; // throw exception instead?
+	unsigned int pos = 0; /* consistantly used as the current position in the decode table */
+	unsigned int table_mask = (1 << table_size);
+	unsigned int bit_mask = (table_mask >> 1); // don't do the first number (note: may zero bits in shifting)
 
-	pos = 0; /* consistantly used as the current position in the decode table */
-
-	bit_mask = table_mask = 1 << table_size;
-	bit_mask >>= 1; /* don't do the first number */
-	
-
-	while((!abort) && (bit_num <= table_size))
+	while (bit_num <= table_size)
 	{
 		for(int symbol = 0; symbol < number_symbols; symbol++)
 		{
 			if(length[symbol] == bit_num)
 			{
-				reverse = pos; /* reverse the order of the position's bits */
-				fill = table_size;
-				
-				/* reverse the position */
-				unsigned int leaf = reverse_position(fill, reverse);
+				/* reverse the order of the position's bits */
+				unsigned int leaf = reverse_position(table_size, pos);
 				
 				if((pos += bit_mask) > table_mask)
 				{
-					abort = 1;
-					break; /* we will overrun the table! abort! */
+					//throw IOException("overrun table!");
+					return 1; /* we will overrun the table! abort! */
 				}
-				fill = bit_mask;
-				next_symbol = 1 << bit_num;
+				
+				unsigned int fill = bit_mask;
+				unsigned int next_symbol = 1 << bit_num;
 				do
 				{
 					table[leaf] = symbol;
@@ -189,37 +111,31 @@ int make_decode_table(int number_symbols, int table_size, unsigned char *length,
 		bit_num++;
 	}
 
-	if((!abort) && (pos != table_mask))
+	if (pos != table_mask)
 	{
 		for(int symbol = pos; symbol < table_mask; symbol++) /* clear the rest of the table */
 		{
-			reverse = symbol; /* reverse the order of the position's bits */
-			fill = table_size;
-			
-			/* reverse the position */
-			unsigned int leaf = reverse_position(fill, reverse);
-			
+			/* reverse the order of the position's bits */
+			unsigned int leaf = reverse_position(table_size, symbol);
 			table[leaf] = 0;
 		}
 		
-		next_symbol = table_mask >> 1;
+		unsigned int next_symbol = table_mask >> 1;
 		pos <<= 16;
 		table_mask <<= 16;
-		bit_mask = 32768;
+		
+		// unconditional set value -> make scoped
+		unsigned int bit_mask = 32768;
 
-		while((!abort) && (bit_num <= 16))
+		while (bit_num <= 16)
 		{
 			for(int symbol = 0; symbol < number_symbols; symbol++)
 			{
 				if(length[symbol] == bit_num)
 				{
-					reverse = pos >> 16; /* reverse the order of the position's bits */
-					fill = table_size;
-					
-					/* reverse the position */
-					unsigned int leaf = reverse_position(fill, reverse);
-					
-					for(fill = 0; fill < bit_num - table_size; fill++)
+					/* reverse the order of the position's bits */
+					unsigned int leaf = reverse_position(table_size, pos >> 16);
+					for(unsigned int fill = 0; fill < bit_num - table_size; fill++)
 					{
 						if(table[leaf] == 0)
 						{
@@ -234,8 +150,8 @@ int make_decode_table(int number_symbols, int table_size, unsigned char *length,
 					table[leaf] = symbol;
 					if((pos += bit_mask) > table_mask)
 					{
-						abort = 1;
-						break; /* we will overrun the table! abort! */
+						//throw IOException("overrun table incomplete!");
+						return 1; /* we will overrun the table! abort! */
 					}
 				}
 			}
@@ -244,13 +160,13 @@ int make_decode_table(int number_symbols, int table_size, unsigned char *length,
 		}
 	}
 
-	if(pos != table_mask) 
+	if (pos != table_mask) 
 	{
 		// TODO: throw exception instead?
-		abort = 1; /* the table is incomplete! */
+		//throw IOException("table is incomplete!");
+		return 1; /* the table is incomplete! */
 	}
-
-	return(abort);
+	return 0;
 }
 
 // TODO: change names of globals later..
@@ -312,23 +228,27 @@ void read_decrunch_length(int &shift, unsigned int &control, unsigned int &decru
 	}
 }
 
+int read_build_offset_table(int &shift, unsigned int &control)
+{
+	unsigned int temp = 0;
+	for(temp = 0; temp < 8; temp++)
+	{
+		offset_len[temp] = control & 7;
+		control >>= 3;
+		if((shift -= 3) < 0)
+		{
+			fix_shift_control_word(shift, control);
+		}
+	}
+	return make_decode_table(8, 7, offset_len, offset_table);
+}
+
 /* Read and build the decrunch tables. There better be enough data in the */
 /* source buffer or it's stuffed. */
-int read_literal_table(unsigned int &global_control, int &global_shift, unsigned int &decrunch_method, unsigned int &decrunch_length)
+int read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch_method, unsigned int &decrunch_length)
 {
-	// "register" keyword is mostly ignored nowadays, compilers have got better anyway..
-	unsigned int control = global_control; // could be removed
-	int shift = global_shift; // could be removed
-
-	// note: this caused bug (or was triggered by another)
-	// and this was used without initializing -> could not build huffman tables
-	// (case where no loop -> init was skipped and used anyway..)
-	// 
-	unsigned int temp = 0; /* could be a register */ // <- !! should be initialized !!
-	unsigned int symbol, count;
-	int abort = 0; // throw exception instead?
-
-	if(shift < 0) /* fix the control word if necessary */
+	/* fix the control word if necessary */
+	if (shift < 0)
 	{
 		fix_shift_control_word(shift, control);
 	}
@@ -342,34 +262,28 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 	}
 
 	/* Read and build the offset huffman table */
-	if((!abort) && (decrunch_method == 3))
+	if(decrunch_method == 3)
 	{
-		for(temp = 0; temp < 8; temp++)
+		if (read_build_offset_table(shift, control) != 0)
 		{
-			offset_len[temp] = control & 7;
-			control >>= 3;
-			if((shift -= 3) < 0)
-			{
-				fix_shift_control_word(shift, control);
-			}
+			return 1;
 		}
-		abort = make_decode_table(8, 7, offset_len, offset_table);
 	}
 
 	/* read decrunch length */
-	if(!abort)
-	{
-		read_decrunch_length(shift, control, decrunch_length);
-	}
+	read_decrunch_length(shift, control, decrunch_length);
 
 	/* read and build the huffman literal table */
-	if((!abort) && (decrunch_method != 1))
+	if (decrunch_method != 1)
 	{
 		// only used in this scope..
 		unsigned int pos = 0;
 		unsigned int fix = 1;
 		unsigned int max_symbol = 256;
+		unsigned int temp = 0;
 
+		unsigned int count = 0;
+		
 		do
 		{
 			for(temp = 0; temp < 20; temp++)
@@ -382,15 +296,16 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 				}
 			}
 			
-			abort = make_decode_table(20, 6, huffman20_len, huffman20_table);
-			if(abort) 
+			if (make_decode_table(20, 6, huffman20_len, huffman20_table) != 0)
 			{
-				break; /* argh! table is corrupt! */
+				//throw IOException("table is corrupt!");
+				//break; /* argh! table is corrupt! */
+				return 1;
 			}
 
 			do
 			{
-				symbol = huffman20_table[control & 63];
+				unsigned int symbol = huffman20_table[control & 63];
 				if(symbol >= 20)
 				{
 					symbol_longer_than_6_bits(shift, control, symbol);
@@ -484,32 +399,23 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 			max_symbol += 512;
 		} while(max_symbol == 768);
 
-		if(!abort)
+		if (make_decode_table(768, 12, literal_len, literal_table) != 0)
 		{
-			abort = make_decode_table(768, 12, literal_len, literal_table);
+			return 1;
 		}
 	}
 
-	global_control = control;
-	global_shift = shift;
-
-	return(abort);
+	return 0;
 }
 
 /* Fill up the decrunch buffer. Needs lots of overrun for both destination */
 /* and source buffers. Most of the time is spent in this routine so it's  */
 /* pretty damn optimized. */
-void decrunch(unsigned int &global_control, int &global_shift, unsigned int &last_offset, unsigned int &decrunch_method)
+void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method)
 {
-	unsigned int control = global_control; // could be removed
-	int shift = global_shift; // could be removed
-	unsigned int temp; /* could be a register */
-	unsigned int symbol, count;
-	//unsigned char *string; // moved later (helps optimizer)
-
 	do
 	{
-		symbol = literal_table[control & 4095];
+		unsigned int symbol = literal_table[control & 4095];
 		if(symbol >= 768)
 		{
 			control >>= 12;
@@ -531,7 +437,7 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &las
 		}
 		else
 		{
-			temp = literal_len[symbol];
+			unsigned int temp = literal_len[symbol];
 			control >>= temp;
 			if((shift -= temp) < 0)
 			{
@@ -546,7 +452,9 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &las
 		else
 		{
 			symbol -= 256;
-			count = table_two[temp = symbol & 31];
+			
+			unsigned int temp = symbol & 31;
+			unsigned int count = table_two[temp];
 			temp = table_one[temp];
 			if((temp >= 3) && (decrunch_method == 3))
 			{
@@ -557,7 +465,8 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &las
 				{
 					fix_shift_control_word(shift, control);
 				}
-				count += (temp = offset_table[control & 127]);
+				temp = offset_table[control & 127];
+				count += temp;
 				temp = offset_len[temp];
 			}
 			else
@@ -576,7 +485,8 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &las
 			}
 			last_offset = count;
 
-			count = table_two[temp = (symbol >> 5) & 15] + 3;
+			temp = (symbol >> 5) & 15;
+			count = table_two[temp] + 3;
 			temp = table_one[temp];
 			count += (control & table_three[temp]);
 			control >>= temp;
@@ -599,9 +509,6 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &las
 			} while(--count);
 		}
 	} while((destination < destination_end) && (source < source_end));
-
-	global_control = control;
-	global_shift = shift;
 }
 
 ///////////// CUnLzx
@@ -653,25 +560,33 @@ void CUnLzx::OpenArchiveFile(CAnsiFile &ArchiveFile)
 	}
 }
 
-void CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
+bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 {
+	// read entry header from archive
+	if (ArchiveFile.Read(Entry.m_Header.archive_header, 31) == false)
+	{
+		// could not read header
+		// -> no more files in archive?
+		return false;
+	}
+
 	// temp for counting crc-checksum of entry-header,
 	// verify by counting that crc in file is same
-	unsigned int uiCrcSum = 0;
-
-	// temp for string-reading
-	unsigned int uiStringLen = 0;
+	CRCSum CrcSum; // TODO: member of entry?
 	
-	// prepare for reading (can remain larger if it is),
-	// zero entire buffer
-	m_ReadBuffer.PrepareBuffer(256, false);
-	unsigned char *pBuf = m_ReadBuffer.GetBegin();
-
 	// get value and reset for counting crc (set zero where header CRC):
 	// count CRC of this portion with zero in CRC-bytes
 	Entry.m_uiCrc = Entry.m_Header.TakeCrcBytes();
-	crc_calc(Entry.m_Header.archive_header, 31, uiCrcSum);
+	CrcSum.crc_calc(Entry.m_Header.archive_header, 31);
 
+	// keep data-CRC for easy handling
+	Entry.m_uiDataCrc = Entry.m_Header.GetDataCrc();
+
+	// zeroize buffer
+	m_ReadBuffer.PrepareBuffer(256, false);
+	unsigned char *pBuf = m_ReadBuffer.GetBegin();
+	unsigned int uiStringLen = 0; // temp for reading string
+	
 	// read file name
 	uiStringLen = Entry.m_Header.GetFileNameLength();
 	if (ArchiveFile.Read(pBuf, uiStringLen) == false)
@@ -680,7 +595,7 @@ void CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 	}
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
-	crc_calc(pBuf, uiStringLen, uiCrcSum); // update CRC
+	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
 	Entry.m_szFileName = (char*)pBuf;      // keep as string
 
 	// read comment
@@ -691,42 +606,39 @@ void CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 	}
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
-	crc_calc(pBuf, uiStringLen, uiCrcSum); // update CRC
+	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
 	Entry.m_szComment = (char*)pBuf;       // keep as string
 
 	// verify counted crc against the one read from file
 	// (in case of corruption of file),
 	// check against CRC in entry-header (instead of data which is separate)
-	if (uiCrcSum != Entry.m_uiCrc)
+	if (CrcSum.GetSum() != Entry.m_uiCrc)
 	{
 		// critical error? 
 		// -> throw exception
-		throw ArcException("CRC: Archive_Header", Entry.m_szFileName);
+		throw ArcException("CRC: Entry Header", Entry.m_szFileName);
 	}
 
 	// parse some entry-header information for later processing
-	Entry.m_uiDataCrc = Entry.m_Header.GetDataCrc(); // keep data-CRC also for easy handling
 	Entry.ParseAttributes();	// file protection modes
 	Entry.HandlePackingSizes(); // packed/unpacked and merge-cases
+	
+	// entry header read
+	return true;
 }
 
 bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 {
-	bool bAbort = false;
-
 	// reset statistical counters before adding again
 	ResetCounters();
-	do
+	
+	long lEntryOffset = 0;
+	while (lEntryOffset < ArchiveFile.GetSize())
 	{
-		long lEntryOffset = 0;
 		if (ArchiveFile.Tell(lEntryOffset) == false)
 		{
 			throw IOException("FTell(): failed to tell position");
 		}
-
-		// add mapping of this offset to entry-information
-		//m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset,CArchiveEntry()));
-		//auto itEntry = m_EntryList.find(lEntryOffset); // locate it again
 
 		auto itEntry = m_EntryList.find(lEntryOffset); // try to locate this..
 		if (itEntry == m_EntryList.end())
@@ -744,16 +656,14 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 		}
 		*/
 		
-		// read entry header from archive
-		if (ArchiveFile.Read(itEntry->second.m_Header.archive_header, 31) == false)
-		{
-			// -> can be normal case when all files handled..
-			return true;
-		}
-
 		// read and verify checksum of this entry-header,
 		// should throw exception on error
-		ReadEntryHeader(ArchiveFile, itEntry->second);
+		if (ReadEntryHeader(ArchiveFile, itEntry->second) == false)
+		{
+			// entry header could not be read
+			// -> no more files in archive
+			return true;
+		}
 
 		// count some statistical information
 		AddCounters(itEntry->second);
@@ -774,13 +684,8 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 			{
 				throw IOException("FSeek(): failed to seek past packed data");
 			}
-			else
-			{
-				bAbort = false; /* continue */
-			}
 		}
-
-	} while (bAbort == false);
+	}
 
 	return true;
 }
@@ -790,18 +695,19 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 //
 bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 {
-	unsigned char *pos = nullptr;
-	unsigned char *temp = nullptr;
-	unsigned int last_offset = 1;
-
-	g_global_control = 0; /* initial control word */
-	g_global_shift = -16;
-
 	::memset(offset_len, 0, sizeof(unsigned char)*8);
 	::memset(literal_len, 0, sizeof(unsigned char)*768);
 
-	source_end = (source = read_buffer + 16384) - 1024;
-	pos = destination_end = destination = decrunch_buffer + 258 + 65536;
+	// setup some globals
+	source = read_buffer + 16384;
+	source_end = source - 1024;
+	destination = decrunch_buffer + 258 + 65536;
+	destination_end = destination;
+	
+	unsigned int last_offset = 1;
+	unsigned int global_control = 0; /* initial control word */
+	int global_shift = -16;
+	unsigned char *pos = destination_end;
 
 	// TODO: use merged group information in extraction
 	// TODO: check that already extracted isn't handled again?
@@ -824,10 +730,9 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 		CAnsiFile OutFile;
 		PrepareEntryForWriting(Entry, OutFile);
 
-	 	unsigned int sum = 0;
+		CRCSum CrcSum; // TODO: member of entry?
+		
 		unsigned int count = 0;
-
-		// check
 		unsigned int unpack_size = Entry.m_ulUnpackedSize;
 
 		while (unpack_size > 0)
@@ -837,7 +742,7 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 				/* check if we have enough data and read some if not */
 				if(source >= source_end) /* have we exhausted the current read buffer? */
 				{
-					temp = read_buffer;
+					unsigned char *temp = read_buffer;
 					count = temp - source + 16384;
 					if(count)
 					{
@@ -872,7 +777,7 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 				/* check if we need to read the tables */
 				if (g_decrunch_length <= 0)
 				{
-					if (read_literal_table(g_global_control, g_global_shift, g_decrunch_method, g_decrunch_length))
+					if (read_literal_table(global_control, global_shift, g_decrunch_method, g_decrunch_length))
 					{
 						/* argh! can't make huffman tables! */
 						throw IOException("can't make huffman tables!");
@@ -882,10 +787,11 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 				/* unpack some data */
 				if(destination >= decrunch_buffer + 258 + 65536)
 				{
-					count = destination - decrunch_buffer - 65536;
+					count = (destination - decrunch_buffer) - 65536;
 					if(count)
 					{
-						temp = (destination = decrunch_buffer) + 65536;
+						destination = decrunch_buffer;
+						unsigned char *temp = destination + 65536;
 						/* copy the overrun to the start of the buffer */
 						// note: in theory could replace loop with
 						// ::memcpy(destination, temp, count);
@@ -897,17 +803,19 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 					}
 					pos = destination;
 				}
+				
 				destination_end = destination + g_decrunch_length;
 				if(destination_end > decrunch_buffer + 258 + 65536)
 				{
 					destination_end = decrunch_buffer + 258 + 65536;
 				}
-				temp = destination;
+				
+				unsigned char *temp = destination;
 
-				decrunch(g_global_control, g_global_shift, last_offset, g_decrunch_method);
+				decrunch(global_control, global_shift, last_offset, g_decrunch_method);
 
 				g_decrunch_length -= (destination - temp);
-			}
+			} /* if(pos == destination) */
 
 			/* calculate amount of data we can use before we need to fill the buffer again */
 			count = destination - pos;
@@ -916,7 +824,7 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 				count = unpack_size; /* take only what we need */
 			}
 
-			crc_calc(pos, count, sum);
+			CrcSum.crc_calc(pos, count);
 
 			if (OutFile.Write(pos, count) == false)
 			{
@@ -937,9 +845,9 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 		// which we need to use in here,
 		// header of file-entry has another in the archive
 		//
-		if (sum != Entry.m_uiDataCrc)
+		if (CrcSum.GetSum() != Entry.m_uiDataCrc)
 		{
-			throw ArcException("CRC: Archive_Header", Entry.m_szFileName);
+			throw ArcException("CRC: Entry Data", Entry.m_szFileName);
 		}
 
 		// extracted
@@ -968,10 +876,7 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 		CAnsiFile OutFile;
 		PrepareEntryForWriting(Entry, OutFile);
 
-		unsigned int uiCrcSum = 0;
-		unsigned int count = 0;
-
-		// check
+		CRCSum CrcSum; // TODO: member of entry?
 		unsigned int unpack_size = Entry.m_ulUnpackedSize;
 
 		// why this?
@@ -993,7 +898,7 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 
 		while (unpack_size > 0)
 		{
-			count = (unpack_size > nBufSize) ? nBufSize : unpack_size;
+			unsigned int count = (unpack_size > nBufSize) ? nBufSize : unpack_size;
 
 			// must succeed reading wanted
 			if (ArchiveFile.Read(pReadBuf, count) == false)
@@ -1002,7 +907,8 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 			}
 			m_pack_size -= count;
 
-			crc_calc(pReadBuf, count, uiCrcSum);
+			// count crc
+			CrcSum.crc_calc(pReadBuf, count);
 
 			if (OutFile.Write(pReadBuf, count) == false)
 			{
@@ -1020,9 +926,9 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 
 		// use CRC of data when checking data..
 		//
-		if (uiCrcSum != Entry.m_uiDataCrc)
+		if (CrcSum.GetSum() != Entry.m_uiDataCrc)
 		{
-			throw ArcException("CRC: Archive_Header", Entry.m_szFileName);
+			throw ArcException("CRC: Entry Data", Entry.m_szFileName);
 		}
 
 		++itEntry;
@@ -1043,13 +949,12 @@ bool CUnLzx::ExtractArchive()
 	CAnsiFile ArchiveFile;
 	OpenArchiveFile(ArchiveFile);
 
-	bool bAbort = false;
-
 	// reset statistical counters before adding again
 	ResetCounters();
-	do
+	
+	long lEntryOffset = 0;
+	while (lEntryOffset < ArchiveFile.GetSize())
 	{
-		long lEntryOffset = 0;
 		if (ArchiveFile.Tell(lEntryOffset) == false)
 		{
 			throw IOException("FTell(): failed to tell position");
@@ -1076,16 +981,14 @@ bool CUnLzx::ExtractArchive()
 		}
 		*/
 
-		// read entry header from archive
-		if (ArchiveFile.Read(itEntry->second.m_Header.archive_header, 31) == false)
-		{
-			// -> can be normal case when all files handled..
-			return true;
-		}
-
 		// read and verify checksum of this entry-header,
 		// should throw exception on error
-		ReadEntryHeader(ArchiveFile, itEntry->second);
+		if (ReadEntryHeader(ArchiveFile, itEntry->second) == false)
+		{
+			// entry header could not be read
+			// -> no more files in archive
+			return true;
+		}
 
 		// count some statistical information
 		AddCounters(itEntry->second);
@@ -1108,25 +1011,13 @@ bool CUnLzx::ExtractArchive()
 				break;
 			}
 
-			if (bRet == false)
-			{
-				// internal error?
-				// -> should throw exception..
-				bAbort = true;
-			}
-
 			// in case of merged files, need to seek data from next entry
 			if (ArchiveFile.Seek(m_pack_size, SEEK_CUR) == false)
 			{
 				throw IOException("FSeek(Data): failed to seek past packed data");
 			}
-
-			/*
-			//ArchiveInfo.m_ulMergeSize = 0; // why?
-			*/
 		}
-
-	} while (bAbort == false);
+	} 
 
 	return true;
 }

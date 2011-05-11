@@ -14,6 +14,7 @@
 #include <map>
 #include <set>
 
+#include "CrcSum.h"
 #include "AnsiFile.h"
 
 
@@ -288,14 +289,6 @@ typedef std::map<long, CArchiveEntry> tArchiveEntryList;
 class CReadBuffer
 */
 
-/* // TODO: move crc-summing to own class
-class CRCSum
-{
-	static const unsigned int g_crc_table[256];
-	inline void crc_calc(const unsigned char *memory, unsigned int length, unsigned int &sum) const;
-	
-};
-*/
 
 /* // TODO: move actual decoding to own class (per compression type)
 class CDecoder
@@ -361,7 +354,7 @@ protected:
 
 	void OpenArchiveFile(CAnsiFile &ArchiveFile);
 
-	void ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry);
+	bool ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry);
 
 	bool ViewArchive(CAnsiFile &ArchiveFile);
 

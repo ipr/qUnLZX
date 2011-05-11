@@ -30,7 +30,7 @@ bool CPathHelper::MakePath(const std::string &szPath)
 		// -> create what we have
 
 		// don't care if it succeeds of not..
-		int iRet = _mkdir(szPath.c_str());
+		_mkdir(szPath.c_str());
 		return true;
 	}
 
@@ -40,7 +40,7 @@ bool CPathHelper::MakePath(const std::string &szPath)
 		std::string szTmpPath = szPath.substr(0, nPos +1);
 
 		// don't care if it succeeds of not..
-		int iRet = _mkdir(szTmpPath.c_str());
+		_mkdir(szTmpPath.c_str());
 
 		nPrevPos = nPos +1;
 		// locate next separator (after current)
@@ -52,7 +52,7 @@ bool CPathHelper::MakePath(const std::string &szPath)
 		// use remaining also (if it doesn't end with path separator)
 		std::string szTmpPath = szPath.substr(nPrevPos);
 		// don't care if it succeeds of not..
-		int iRet = _mkdir(szTmpPath.c_str());
+		_mkdir(szTmpPath.c_str());
 	}
 	return true;
 }
@@ -80,7 +80,7 @@ bool CPathHelper::MakePathToFile(const std::string &szOutFile)
 		std::string szPath = szOutFile.substr(0, nPos +1);
 
 		// don't care if it succeeds of not..
-		int iRet = _mkdir(szPath.c_str());
+		_mkdir(szPath.c_str());
 
 		// locate next separator (after current)
 		nPos = szOutFile.find('/', nPos +2);
