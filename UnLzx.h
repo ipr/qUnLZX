@@ -12,7 +12,8 @@
 #include <string>
 //#include <list>
 #include <map>
-#include <set>
+//#include <set>
+#include <vector>
 
 #include "CrcSum.h"
 #include "AnsiFile.h"
@@ -339,6 +340,14 @@ public:
 	CMergeGroup(void) 
 		: m_MergedList()
 		, m_lGroupOffset(0)
+		//, m_ulGroupUnpackedSize(0)
+		, m_ulMergeSize(0)
+	{};
+	CMergeGroup(const long lOffset) 
+		: m_MergedList()
+		, m_lGroupOffset(lOffset)
+		//, m_ulGroupUnpackedSize(0)
+		, m_ulMergeSize(0)
 	{};
 	~CMergeGroup(void) 
 	{
@@ -347,21 +356,37 @@ public:
 		m_MergedList.clear();
 	};
 	
-	typedef std::set<CArchiveEntry*> tMergedList;
+	typedef std::vector<CArchiveEntry*> tMergedList;
 	tMergedList m_MergedList;
 
 	// offset in archive file
 	// to beginning of this group of merged files.
 	long m_lGroupOffset;
 	
+	// total size of group when unpacked (sum of file sizes)
+	//unsigned long m_ulGroupUnpackedSize;
+
+	// merged data size in archive
+	unsigned long m_ulMergeSize;
+
 	// add entry as member of this group
+	// note: merged files need to extracted in-order
+	// (by offset in file) for correctness
+	// -> caller should get ordered list (as found)
 	void SetEntry(CArchiveEntry *pEntry)
 	{
-		auto it = m_MergedList.find(pEntry);
-		if (it == m_MergedList.end())
+		auto it = m_MergedList.begin();
+		auto itEnd = m_MergedList.end();
+		while (it != itEnd)
 		{
-			m_MergedList.insert(tMergedList::value_type(pEntry));
+			if ((*it) == pEntry)
+			{
+				// bug: same instance -> abort
+				return;
+			}
+			++it;
 		}
+		m_MergedList.push_back(pEntry);
 	}
 };
 
@@ -369,8 +394,9 @@ public:
 class CArchiveEntry
 {
 public:
-	CArchiveEntry(void)
-		: m_Header()
+	CArchiveEntry(const long lEntryOffset, const unsigned char *pArcHeader, const size_t nArchSize)
+		: m_lEntryOffset(lEntryOffset)
+		, m_Header()
 		, m_Attributes()
 		, m_Timestamp()
 		, m_MachineType(tLzxArchiveHeader::HDR_TYPE_AMIGA)
@@ -385,9 +411,19 @@ public:
 		, m_bIsExtracted(false)
 		, m_szFileName()
 		, m_szComment()
-	{}
+	{
+		// always same size
+		::memcpy(m_Header.archive_header, pArcHeader, nArchSize);
+	}
 	~CArchiveEntry(void)
 	{}
+
+	// copy header CRC-bytes from read header
+	// and zeroize them before counting CRC on that part
+	void TakeCrcBytes()
+	{
+		m_uiCrc = m_Header.TakeCrcBytes();
+	}
 	
 	void ParseHeader()
 	{
@@ -454,6 +490,10 @@ public:
 		pGroup->SetEntry(this);
 	}
 
+	// offset in archive file
+	// to beginning of this files.
+	long m_lEntryOffset;
+
 	// entry header from archive
 	tLzxArchiveHeader m_Header;
 	
@@ -489,7 +529,6 @@ public:
 	// compressed size from file
 	unsigned long m_ulPackedSize;
 
-	
 	// merge group this belongs to (if any)
 	CMergeGroup *m_pGroup;
 
@@ -508,19 +547,15 @@ public:
 // list of each merged-file group in single archive
 // key: offset in archive-file to group (internal use)
 // value: description of group
-typedef std::map<long, CMergeGroup> tMergeGroupList;
+typedef std::map<long, CMergeGroup*> tMergeGroupList;
 
 // list of each entry in single archive
 // key: offset in archive-file to entry (internal use)
 // value: description of entry
-typedef std::map<long, CArchiveEntry> tArchiveEntryList;
-
-/*  moved to CAnsiFile.
-class CReadBuffer
-*/
+typedef std::map<long, CArchiveEntry*> tArchiveEntryList;
 
 
-// TODO: move actual decoding to own class (per compression type)
+// moving actual decoding to own class (per compression type)
 // -> one compression/decompressio type (sliding window changes)
 class CLzxDecoder
 {
@@ -597,7 +632,18 @@ protected:
 			control >>= 1;
 		} while(symbol >= 20);
 	}
-	
+
+	// just shortens read_literal_table() slightly..
+	void read_decrunch_method(int &shift, unsigned int &control, unsigned int &decrunch_method)
+	{
+		decrunch_method = control & 7;
+		control >>= 3;
+		if((shift -= 3) < 0)
+		{
+			fix_shift_control_word(shift, control);
+		}
+	}
+
 	// just shortens read_literal_table() slightly..
 	void read_decrunch_length(int &shift, unsigned int &control, unsigned int &decrunch_length)
 	{
@@ -637,28 +683,69 @@ protected:
 		}
 		return make_decode_table(8, 7, offset_len, offset_table);
 	}
+
+	//unsigned int unpack_size;
+	//unsigned int pack_size;
 	
+	unsigned int m_last_offset;
+	unsigned int m_global_control; /* initial control word */
+	int m_global_shift;
+
+
 public:
 	CLzxDecoder() {}
 	
-	unsigned char *setup_buffers_for_decode(unsigned char *pReadBuffer, unsigned char *pDecrunchBuffer)
+	void setup_buffers_for_decode(unsigned char *pReadBuffer, unsigned char *pDecrunchBuffer)
 	{
 		::memset(offset_len, 0, sizeof(unsigned char)*8);
 		::memset(literal_len, 0, sizeof(unsigned char)*768);
 		
+		m_last_offset = 1;
+		m_global_control = 0; // initial control word 
+		m_global_shift = -16;
+
 		// setup some globals
 		source = pReadBuffer + 16384;
 		source_end = source - 1024;
 		destination = pDecrunchBuffer + 258 + 65536;
 		destination_end = destination;
+
 		m_pos = destination;
-		
-		return destination_end;
+		//return m_pos;
 	}
 	
 	int make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table);
 	int read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch_method, unsigned int &decrunch_length);
+
+	int read_literal_table(unsigned int &decrunch_method, unsigned int &decrunch_length)
+	{
+		return read_literal_table(m_global_control, m_global_shift, decrunch_method, decrunch_length);
+	}
+
 	void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method, unsigned char *pdecrunchbuffer);
+
+	unsigned int decrunch_data(unsigned int &decrunch_method, unsigned int &decrunch_length, unsigned char *pdecrunchbuffer)
+	{
+		/* unpack some data */
+		unsigned int count = unpack(pdecrunchbuffer, decrunch_length);
+
+		// take before decrunch
+		unsigned char *ptempdest = destination;
+
+		decrunch(m_global_control, m_global_shift, m_last_offset, decrunch_method, pdecrunchbuffer);
+
+		// return count: how much was decrunched
+		return (destination - ptempdest);
+	}
+
+	bool is_time_to_fill_buffer()
+	{
+		if (m_pos == destination)
+		{
+			return true;
+		}
+		return false;
+	}
 
 	unsigned int unpack(unsigned char *pdecrunchbuffer, unsigned int &decrunch_length)
 	{
@@ -694,6 +781,17 @@ public:
 		return count;
 	}
 	
+	// get count of unpacked data in decrunch-buffer for writing
+	unsigned long get_decrunched_size()
+	{
+		return (destination - m_pos);
+	}
+
+	// update current position by decrunched size
+	void update_pos(unsigned long ulDecrunchedSize)
+	{
+		m_pos += ulDecrunchedSize;
+	}
 };
 
 class CUnLzx
@@ -744,7 +842,7 @@ private:
 		// add some statistical information
 		m_ulTotalPacked += Entry.m_ulPackedSize;
 		m_ulTotalUnpacked += Entry.m_ulUnpackedSize;
-		m_ulMergeSize += Entry.m_ulUnpackedSize;
+		//m_ulMergeSize += Entry.m_ulUnpackedSize;
 		m_ulTotalFiles++;
 	}
 	void ResetCounters()
@@ -752,7 +850,29 @@ private:
 		m_ulTotalUnpacked = 0;
 		m_ulTotalPacked = 0;
 		m_ulTotalFiles = 0;
-		m_ulMergeSize = 0;
+		//m_ulMergeSize = 0;
+	}
+	void ClearItems()
+	{
+		auto itG = m_GroupList.begin();
+		auto itGEnd = m_GroupList.end();
+		while (itG != itGEnd)
+		{
+			CMergeGroup *pGroup = itG->second;
+			delete pGroup;
+			++itG;
+		}
+		m_GroupList.clear();
+
+		auto itE = m_EntryList.begin();
+		auto itEEnd = m_EntryList.end();
+		while (itE != itEEnd)
+		{
+			CArchiveEntry *pEntry = itE->second;
+			delete pEntry;
+			++itE;
+		}
+		m_EntryList.clear();
 	}
 
 protected:
@@ -761,15 +881,15 @@ protected:
 
 	void OpenArchiveFile(CAnsiFile &ArchiveFile);
 
-	bool ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry);
+	//bool ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffset, CArchiveEntry &Entry);
+	CArchiveEntry *ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffset);
+
+	bool ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &vEntryList);
+	bool ExtractStore(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &vEntryList);
+
+	bool ExtractArchive(CAnsiFile &ArchiveFile);
 
 	bool ViewArchive(CAnsiFile &ArchiveFile);
-
-	bool ExtractNormal(CAnsiFile &ArchiveFile);
-	bool ExtractStore(CAnsiFile &ArchiveFile);
-	bool ExtractUnknown(CAnsiFile &ArchiveFile);
-
-	bool ExtractArchive();
 
 public:
 	// options for extraction (some for viewing?)
@@ -808,25 +928,29 @@ public:
 		, m_ulTotalFiles(0)
 		, m_ulMergeSize(0)
 	{
+
 	}
 
 	~CUnLzx(void)
 	{
-		m_GroupList.clear();
-		m_EntryList.clear();
+		ClearItems();
 	}
 
 	// view a single archive:
 	// get archive metadata
 	// and list of each entry in the archive
 	//
-	bool View(tArchiveEntryList &lstArchiveInfo);
+	bool View();
+
+	//bool GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const;
 
 	// extract a single archive:
 	// give path where files are extracted to,
 	// additional directories are created under that (if necessary)
 	//
-	bool Extract(const std::string &szOutPath);
+	bool Extract();
+
+	bool SetExtractPath(const std::string &szOutPath);
 
 	// TODO:
 	// verify archive integrity
@@ -856,10 +980,13 @@ public:
 	{ 
 		return m_ulTotalFiles; 
 	}
+
+	/* // internal use only.. per-group
 	unsigned long GetMergeSize() 
 	{ 
 		return m_ulMergeSize; 
 	}
+	*/
 };
 
 #endif // ifndef _UNLZX_H_

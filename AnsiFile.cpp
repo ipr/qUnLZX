@@ -6,6 +6,7 @@
 // ilkka.prusi@gmail.com
 //
 
+#include "stdafx.h"
 #include "AnsiFile.h"
 
 //#include <dir.h>

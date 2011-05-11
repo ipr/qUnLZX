@@ -155,7 +155,10 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 		// open given file
 		tArchiveEntryList lstArchiveInfo;
 		CUnLzx ul(szArchiveFile.toStdString());
-		ul.View(lstArchiveInfo);
+		if (ul.View() == true)
+		{
+			ul.GetEntryList(lstArchiveInfo);
+		}
 		
 		// success: keep some info
 		setWindowTitle(m_szBaseTitle + " - " + szArchiveFile);

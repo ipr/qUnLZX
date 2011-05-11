@@ -9,6 +9,7 @@
 // unlzx.c 1.1 (03.4.01, Erik Meusel)
 //
 
+#include "stdafx.h"
 #include "UnLzx.h"
 
 // pre-created decoding tables
@@ -162,12 +163,7 @@ int CLzxDecoder::read_literal_table(unsigned int &control, int &shift, unsigned 
 	}
 
 	/* read the decrunch method */
-	decrunch_method = control & 7;
-	control >>= 3;
-	if((shift -= 3) < 0)
-	{
-		fix_shift_control_word(shift, control);
-	}
+	read_decrunch_method(shift, control, decrunch_method);
 
 	/* Read and build the offset huffman table */
 	if(decrunch_method == 3)
@@ -180,6 +176,12 @@ int CLzxDecoder::read_literal_table(unsigned int &control, int &shift, unsigned 
 
 	/* read decrunch length */
 	read_decrunch_length(shift, control, decrunch_length);
+
+	// note: no need to continue -> cleanup below
+	if (decrunch_method == 1)
+	{
+		return 0;
+	}
 
 	/* read and build the huffman literal table */
 	if (decrunch_method != 1)
@@ -468,15 +470,22 @@ void CUnLzx::OpenArchiveFile(CAnsiFile &ArchiveFile)
 	}
 }
 
-bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
+//bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffset, CArchiveEntry &Entry)
+CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffset)
 {
+	// zeroize buffer
+	m_ReadBuffer.PrepareBuffer(256, false);
+	unsigned char *pBuf = m_ReadBuffer.GetBegin();
+
 	// read entry header from archive
-	if (ArchiveFile.Read(Entry.m_Header.archive_header, 31) == false)
+	if (ArchiveFile.Read(pBuf, 31) == false)
 	{
 		// could not read header
 		// -> no more files in archive?
-		return false;
+		return nullptr;
 	}
+
+	CArchiveEntry *pEntry = new CArchiveEntry(lOffset, pBuf, 31);
 
 	// temp for counting crc-checksum of entry-header,
 	// verify by counting that crc in file is same
@@ -484,16 +493,13 @@ bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 	
 	// get value and reset for counting crc (set zero where header CRC):
 	// count CRC of this portion with zero in CRC-bytes
-	Entry.m_uiCrc = Entry.m_Header.TakeCrcBytes();
-	CrcSum.crc_calc(Entry.m_Header.archive_header, 31);
+	pEntry->TakeCrcBytes();
+	CrcSum.crc_calc(pEntry->m_Header.archive_header, 31);
 
-	// zeroize buffer
-	m_ReadBuffer.PrepareBuffer(256, false);
-	unsigned char *pBuf = m_ReadBuffer.GetBegin();
 	unsigned int uiStringLen = 0; // temp for reading string
 	
 	// read file name
-	uiStringLen = Entry.m_Header.GetFileNameLength();
+	uiStringLen = pEntry->m_Header.GetFileNameLength();
 	if (ArchiveFile.Read(pBuf, uiStringLen) == false)
 	{
 		throw IOException("Failed reading string: filename");
@@ -501,10 +507,10 @@ bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
 	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
-	Entry.m_szFileName = (char*)pBuf;      // keep as string
+	pEntry->m_szFileName = (char*)pBuf;      // keep as string
 
 	// read comment
-	uiStringLen = Entry.m_Header.GetCommentLength();
+	uiStringLen = pEntry->m_Header.GetCommentLength();
 	if (ArchiveFile.Read(pBuf, uiStringLen) == false)
 	{
 		throw IOException("Failed reading string: comment");
@@ -512,161 +518,120 @@ bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
 	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
-	Entry.m_szComment = (char*)pBuf;       // keep as string
+	pEntry->m_szComment = (char*)pBuf;       // keep as string
 
 	// verify counted crc against the one read from file
 	// (in case of corruption of file),
 	// check against CRC in entry-header (instead of data which is separate)
-	if (CrcSum.GetSum() != Entry.m_uiCrc)
+	if (CrcSum.GetSum() != pEntry->m_uiCrc)
 	{
-		// critical error? 
-		// -> throw exception
-		throw ArcException("CRC: Entry Header", Entry.m_szFileName);
+		// critical error 
+		// -> throw exception (cleanup first)
+		delete pEntry;
+		throw ArcException("CRC: Entry Header", pEntry->m_szFileName);
 	}
 
 	// parse some entry-header information for later processing
-	Entry.ParseHeader();
+	pEntry->ParseHeader();
 	
-	// entry header read
-	return true;
+	// entry header read successfully
+	return pEntry;
 }
 
-bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
-{
-	// reset statistical counters before adding again
-	ResetCounters();
-	
-	long lEntryOffset = 0;
-	while (lEntryOffset < ArchiveFile.GetSize())
-	{
-		if (ArchiveFile.Tell(lEntryOffset) == false)
-		{
-			throw IOException("FTell(): failed to tell position");
-		}
-
-		auto itEntry = m_EntryList.find(lEntryOffset); // try to locate this..
-		if (itEntry == m_EntryList.end())
-		{
-			// add mapping of this offset to entry-information
-			m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset,CArchiveEntry()));
-			itEntry = m_EntryList.find(lEntryOffset); // locate it again
-		}
-		
-		/*
-		if ((lEntryOffset + 31) >= ArchiveFile.GetSize())
-		{
-			// near or at end of file -> no more headers
-			return true;
-		}
-		*/
-		
-		// read and verify checksum of this entry-header,
-		// should throw exception on error
-		if (ReadEntryHeader(ArchiveFile, itEntry->second) == false)
-		{
-			// entry header could not be read
-			// -> no more files in archive
-			return true;
-		}
-
-		// count some statistical information
-		AddCounters(itEntry->second);
-		
-		// TODO: if file starts a merged group, add info to list
-		/*
-		m_GroupList.insert(tMergeGroupList::value_type(lEntryOffset, CMergeGroup()));
-		auto itGroup = m_GroupList.find(lEntryOffset);
-		CMergeGroup *pGroup = &(itGroup->second);
-		itEntry->second.SetGroup(pGroup);
-		*/
-
-		/* seek past the packed data */
-		if (itEntry->second.m_ulPackedSize)
-		{
-			m_ulMergeSize = 0; // why?
-			if (ArchiveFile.Seek(itEntry->second.m_ulPackedSize, SEEK_CUR) == false)
-			{
-				throw IOException("FSeek(): failed to seek past packed data");
-			}
-		}
-	}
-
-	return true;
-}
 
 // this is actual "decompress+store" method on compressed files?
 // (ExtractStore() for unpacked+store?)
 //
-bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
+bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &vEntryList)
 {
 	unsigned char *preadbuffer = m_ReadBuffer.GetBegin();
 	unsigned char *pdecrunchbuffer = m_DecrunchBuffer.GetBegin();
 	
-	unsigned int last_offset = 1;
-	unsigned int global_control = 0; /* initial control word */
-	int global_shift = -16;
-	unsigned char *pos = m_Decoder.setup_buffers_for_decode(preadbuffer, pdecrunchbuffer);
+	m_Decoder.setup_buffers_for_decode(preadbuffer, pdecrunchbuffer);
 
 	// TODO: use merged group information in extraction
 	// TODO: check that already extracted isn't handled again?
-	auto itEntry = m_EntryList.begin();
-	while (itEntry != m_EntryList.end())
+	auto itEntry = vEntryList.begin();
+	while (itEntry != vEntryList.end())
 	{
-		CArchiveEntry &Entry = itEntry->second;
+		CArchiveEntry *pEntry = (*itEntry);
 
-		// is extracted already?
-		// TODO: think of better way for merged files..
-		if (Entry.m_bIsExtracted == true)
+		// not actual file ? (EOF, maybe removed later..)
+		if (pEntry->m_PackMode == tLzxArchiveHeader::HDR_PACK_EOF)
 		{
 			++itEntry;
 			continue;
 		}
 
+		// is extracted already?
+		// TODO: think of better way for merged files..
+		if (pEntry->m_bIsExtracted == true)
+		{
+			++itEntry;
+			continue;
+		}
+
+		CRCSum CrcSum; // TODO: member of entry?
+
 		// verify path exists and create it if necessary,
 		// open file for writing
 		// (should throw exception if critical..)
 		CAnsiFile OutFile;
-		PrepareEntryForWriting(Entry, OutFile);
+		PrepareEntryForWriting(*pEntry, OutFile);
 
-		CRCSum CrcSum; // TODO: member of entry?
-		
-		unsigned int count = 0;
-		unsigned int unpack_size = Entry.m_ulUnpackedSize;
+		unsigned int unpack_size = pEntry->m_ulUnpackedSize;
 
 		while (unpack_size > 0)
 		{
-			if(pos == m_Decoder.destination) /* time to fill the buffer? */
+			/* time to fill the buffer? */
+			if (m_Decoder.is_time_to_fill_buffer() == true)
 			{
 				/* check if we have enough data and read some if not */
 				if(m_Decoder.source >= m_Decoder.source_end) /* have we exhausted the current read buffer? */
 				{
-					unsigned char *temp = preadbuffer;
-					count = temp - m_Decoder.source + 16384;
-					if(count)
+					/* copy the remaining overrun to the start of the buffer */
+					//unsigned char *temp = preadbuffer; // start of buf
+					unsigned int count = (preadbuffer - m_Decoder.source) + 16384; // size before moving
+					if (count > 0)
 					{
-						/* copy the remaining overrun to the start of the buffer */
-						// note: in theory could use memcpy
-						// but memory-areas may be overlapping partially
-						// -> can't use memcpy() safely..
-						do
+						// data remains -> move to beginning
+						/*
+						// check for overlap: uncomment this if not supported by memmove()
+						if ((preadbuffer + count) > m_Decoder.source)
 						{
-							*temp++ = *m_Decoder.source++;
-						} while(--count);
+							// need overlapped moving
+							unsigned char *temp = preadbuffer; // start of buf
+							do
+							{
+								*temp++ = *m_Decoder.source++;
+							} while(--count);
+						}
+						*/
+						::memmove(preadbuffer, m_Decoder.source, count);
 					}
-					m_Decoder.source = preadbuffer;
-					count = m_Decoder.source - temp + 16384;
+					unsigned char *pEnd = preadbuffer + count;
 
+					m_Decoder.source = preadbuffer;
+					count = (m_Decoder.source - pEnd) + 16384; // size after moving
+
+					// check remaining packed-data to read
 					if (m_pack_size < count) 
 					{
-						count = m_pack_size; /* make sure we don't read too much */
+						// make sure we don't read too much: remaining at most
+						count = m_pack_size;
 					}
-					if (ArchiveFile.Read(temp, count) == false)
+
+					// read to where existing data ends?
+					if (ArchiveFile.Read(pEnd, count) == false)
 					{
 						throw IOException("FRead(Archive)");
 					}
+
 					m_pack_size -= count;
-					temp += count;
-					if (m_Decoder.source >= temp) 
+					pEnd += count;
+
+					// this only if count is already zero 
+					if (m_Decoder.source >= pEnd) 
 					{
 						break; /* argh! no more data! */
 					}
@@ -675,46 +640,43 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 				/* check if we need to read the tables */
 				if (m_decrunch_length <= 0)
 				{
-					if (m_Decoder.read_literal_table(global_control, global_shift, m_decrunch_method, m_decrunch_length))
+					if (m_Decoder.read_literal_table(m_decrunch_method, m_decrunch_length))
 					{
 						/* argh! can't make huffman tables! */
 						throw IOException("can't make huffman tables!");
 						//break;
 					}
 				}
-				
-				/* unpack some data */
-				count = m_Decoder.unpack(pdecrunchbuffer, m_decrunch_length);
-				pos = m_Decoder.destination;
-				
-				unsigned char *temp = m_Decoder.destination;
 
-				m_Decoder.decrunch(global_control, global_shift, last_offset, m_decrunch_method, pdecrunchbuffer);
+				// unpack/decrunch some data,
+				// update count: how much was decrunched
+				m_decrunch_length -= m_Decoder.decrunch_data(m_decrunch_method, m_decrunch_length, pdecrunchbuffer);
 
-				m_decrunch_length -= (m_Decoder.destination - temp);
 			} /* if(pos == destination) */
 
 			/* calculate amount of data we can use before we need to fill the buffer again */
-			count = m_Decoder.destination - pos;
-			if(count > unpack_size) 
+			unsigned long decrunchedsize = m_Decoder.get_decrunched_size();
+			if (decrunchedsize > unpack_size) 
 			{
-				count = unpack_size; /* take only what we need */
+				decrunchedsize = unpack_size; /* take only what we need */
 			}
 
-			CrcSum.crc_calc(pos, count);
-
-			if (OutFile.Write(pos, count) == false)
+			// update to crc and write to output-file
+			CrcSum.crc_calc(m_Decoder.m_pos, decrunchedsize);
+			if (OutFile.Write(m_Decoder.m_pos, decrunchedsize) == false)
 			{
 				throw IOException("FWrite(Out)");
 			}
-			unpack_size -= count;
-			pos += count;
+
+			unpack_size -= decrunchedsize;
+			m_Decoder.update_pos(decrunchedsize);
+
 		} // while (unpack_size > 0)
 
 		// just make sure enough written before closing
 		if (OutFile.Flush() == false)
 		{
-			throw ArcException("Failed to flush on output-entry", Entry.m_szFileName);
+			throw ArcException("Failed to flush on output-entry", pEntry->m_szFileName);
 		}
 		OutFile.Close();
 
@@ -722,14 +684,14 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 		// which we need to use in here,
 		// header of file-entry has another in the archive
 		//
-		if (CrcSum.GetSum() != Entry.m_uiDataCrc)
+		if (CrcSum.GetSum() != pEntry->m_uiDataCrc)
 		{
-			throw ArcException("CRC: Entry Data", Entry.m_szFileName);
+			throw ArcException("CRC: Entry Data", pEntry->m_szFileName);
 		}
 
 		// extracted
 		// TODO: think of better way for merged files..
-		Entry.m_bIsExtracted = true;
+		pEntry->m_bIsExtracted = true;
 
 		++itEntry;
 	} // while (itEntry != m_EntryList.end())
@@ -739,31 +701,44 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 
 // this is actually store "as-is" method when no compression applied?
 //
-bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
+bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &vEntryList)
 {
-	// TODO: check that already extracted isn't handled again?
-	auto itEntry = m_EntryList.begin();
-	while (itEntry != m_EntryList.end())
+	auto itEntry = vEntryList.begin();
+	while (itEntry != vEntryList.end())
 	{
-		CArchiveEntry &Entry = itEntry->second;
+		CArchiveEntry *pEntry = (*itEntry);
+
+		// not actual file (EOF) ?
+		if (pEntry->m_PackMode == tLzxArchiveHeader::HDR_PACK_EOF)
+		{
+			++itEntry;
+			continue;
+		}
+
+		// already extracted ?
+		if (pEntry->m_bIsExtracted == true)
+		{
+			++itEntry;
+			continue;
+		}
 
 		// verify path exists and create it if necessary,
 		// open file for writing
 		// (should throw exception if critical..)
 		CAnsiFile OutFile;
-		PrepareEntryForWriting(Entry, OutFile);
+		PrepareEntryForWriting(*pEntry, OutFile);
 
 		CRCSum CrcSum; // TODO: member of entry?
-		unsigned int unpack_size = Entry.m_ulUnpackedSize;
+		unsigned int unpack_size = pEntry->m_ulUnpackedSize;
 
 		// why this?
 		// in this method of packing there is no compression
 		// -> only read&write same amount as actually is in archive..
 		// (case for a corrupted file?)
 		//
-		if (unpack_size > Entry.m_ulPackedSize) 
+		if (unpack_size > pEntry->m_ulPackedSize) 
 		{
-			unpack_size = Entry.m_ulPackedSize;
+			unpack_size = pEntry->m_ulPackedSize;
 		}
 		
 		// prepare buffer to at least given size
@@ -789,7 +764,7 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 
 			if (OutFile.Write(pReadBuf, count) == false)
 			{
-				throw ArcException("Failed to write to output-entry", Entry.m_szFileName);
+				throw ArcException("Failed to write to output-entry", pEntry->m_szFileName);
 			}
 			unpack_size -= count;
 		}
@@ -797,15 +772,15 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 		// just make sure enough written before closing
 		if (OutFile.Flush() == false)
 		{
-			throw ArcException("Failed to flush on output-entry", Entry.m_szFileName);
+			throw ArcException("Failed to flush on output-entry", pEntry->m_szFileName);
 		}
 		OutFile.Close();
 
 		// use CRC of data when checking data..
 		//
-		if (CrcSum.GetSum() != Entry.m_uiDataCrc)
+		if (CrcSum.GetSum() != pEntry->m_uiDataCrc)
 		{
-			throw ArcException("CRC: Entry Data", Entry.m_szFileName);
+			throw ArcException("CRC: Entry Data", pEntry->m_szFileName);
 		}
 
 		++itEntry;
@@ -813,21 +788,76 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 	return true;
 }
 
-// actually, just place-holder in case we can't understand the packing mode..
-//
-bool CUnLzx::ExtractUnknown(CAnsiFile &ArchiveFile)
+bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 {
-	throw IOException("Extract: unknown pack mode");
+	auto itEntry = m_EntryList.begin();
+	auto itEntryEnd = m_EntryList.end();
+
+	while (itEntry != itEntryEnd)
+	{
+		CArchiveEntry *pEntry = itEntry->second;
+		if (pEntry->m_bIsExtracted == true)
+		{
+			++itEntry;
+			continue;
+		}
+
+		std::vector<CArchiveEntry*> vEntryList;
+		if (pEntry->m_bIsMerged == true)
+		{
+			// merged-files group compression..
+			CMergeGroup *pGroup = pEntry->m_pGroup;
+			if (ArchiveFile.Seek(pGroup->m_lGroupOffset, SEEK_SET) == false)
+			{
+				throw IOException("FSeek(Data): failed to seek merge-group start");
+			}
+			vEntryList = pGroup->m_MergedList;
+		}
+		else
+		{
+			// single-file compression..
+			if (ArchiveFile.Seek(pEntry->m_lEntryOffset, SEEK_SET) == false)
+			{
+				throw IOException("FSeek(Data): failed to seek merge-group start");
+			}
+			vEntryList.push_back(pEntry);
+		}
+
+		if (pEntry->m_ulPackedSize)
+		{
+			bool bRet = false;
+			m_pack_size = pEntry->m_ulPackedSize;
+
+			// TODO: give merge-group for extraction..
+			switch (pEntry->m_PackMode)
+			{
+			case tLzxArchiveHeader::HDR_PACK_STORE: /* store */
+				bRet = ExtractStore(ArchiveFile, vEntryList);
+				break;
+
+			case tLzxArchiveHeader::HDR_PACK_NORMAL: /* normal */
+				bRet = ExtractNormal(ArchiveFile, vEntryList);
+				break;
+
+			default: /* unknown */
+				throw IOException("Extract: unknown pack mode");
+				// -> skip ?
+				//ArchiveFile.Seek(pEntry->m_ulPackedSize, SEEK_CUR);
+				break;
+			}
+		}
+
+		++itEntry;
+	}
+
 	return true;
 }
 
-bool CUnLzx::ExtractArchive()
+bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 {
-	CAnsiFile ArchiveFile;
-	OpenArchiveFile(ArchiveFile);
-
 	// reset statistical counters before adding again
 	ResetCounters();
+	ClearItems();
 	
 	long lEntryOffset = 0;
 	while (lEntryOffset < ArchiveFile.GetSize())
@@ -837,65 +867,68 @@ bool CUnLzx::ExtractArchive()
 			throw IOException("FTell(): failed to tell position");
 		}
 
-		// TODO: for merged files, use temporary list of each entry
-		// so that we only extract those in same merge
-		// and not twice any file already extracted?
-		// TODO: use merged group information in extraction
-
-		auto itEntry = m_EntryList.find(lEntryOffset); // try to locate this..
-		if (itEntry == m_EntryList.end())
-		{
-			// add mapping of this offset to entry-information
-			m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset,CArchiveEntry()));
-			itEntry = m_EntryList.find(lEntryOffset); // locate it again
-		}
-		
-		/*
-		if ((lEntryOffset + 31) >= ArchiveFile.GetSize())
-		{
-			// near or at end of file -> no more headers
-			return true;
-		}
-		*/
-
 		// read and verify checksum of this entry-header,
-		// should throw exception on error
-		if (ReadEntryHeader(ArchiveFile, itEntry->second) == false)
+		// should throw exception on error,
+		// null-object on end of file
+		CArchiveEntry *pEntry = ReadEntryHeader(ArchiveFile, lEntryOffset);
+		if (pEntry == nullptr)
 		{
 			// entry header could not be read
 			// -> no more files in archive
 			return true;
 		}
 
+		// keep this entry
+		m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset, pEntry));
+		
 		// count some statistical information
-		AddCounters(itEntry->second);
+		AddCounters(*pEntry);
+
+		if (pEntry->m_bIsMerged == true
+			&& m_ulMergeSize == 0)
+		{
+			// entry starts merge-group?
+			m_GroupList.insert(tMergeGroupList::value_type(lEntryOffset, new CMergeGroup(lEntryOffset)));
+			auto itGroup = m_GroupList.find(lEntryOffset);
+			CMergeGroup *pGroup = itGroup->second;
+			pEntry->SetGroup(pGroup);
+		}
+		else if (pEntry->m_bIsMerged == true)
+		{
+			// get latest merge-group for addition
+			auto itGroup = m_GroupList.rbegin();
+			CMergeGroup *pGroup = itGroup->second;
+			pEntry->SetGroup(pGroup);
+		}
+
+		m_ulMergeSize += pEntry->m_ulUnpackedSize;
+
+		// flag: merged == true,
+		// packed size given -> end of merge-group?
+		if (pEntry->m_bIsMerged == true
+			&& pEntry->m_ulPackedSize)
+		{
+			// end of merge-group, merged size in m_ulMergeSize
+			//pGroup->m_ulMergeSize = m_ulMergeSize;
+			auto itGroup = m_GroupList.rbegin();
+			CMergeGroup *pGroup = itGroup->second;
+			pEntry->SetGroup(pGroup);
+
+			pGroup->m_ulMergeSize = m_ulMergeSize;
+			m_ulMergeSize = 0; // reset counter (end of merge-group)
+		}
 
 		/* seek past the packed data */
-		if (itEntry->second.m_Header.GetPackSize() != 0)
+		if (pEntry->m_ulPackedSize)
 		{
-			bool bRet = false;
-			m_pack_size = itEntry->second.m_Header.GetPackSize();
-			switch (itEntry->second.m_Header.GetPackMode())
-			{
-			case 0: /* store */
-				bRet = ExtractStore(ArchiveFile);
-				break;
-			case 2: /* normal */
-				bRet = ExtractNormal(ArchiveFile);
-				break;
-			default: /* unknown */
-				bRet = ExtractUnknown(ArchiveFile);
-				break;
-			}
-
 			// in case of merged files, need to seek data from next entry
 			// -> seek past this data
-			if (ArchiveFile.Seek(m_pack_size, SEEK_CUR) == false)
+			if (ArchiveFile.Seek(pEntry->m_ulPackedSize, SEEK_CUR) == false)
 			{
-				throw IOException("FSeek(Data): failed to seek past packed data");
+				throw IOException("FSeek(): failed to seek past packed data");
 			}
 		}
-	} 
+	}
 
 	return true;
 }
@@ -904,21 +937,50 @@ bool CUnLzx::ExtractArchive()
 //////// public methods
 
 // list all files in archive for viewing
-bool CUnLzx::View(tArchiveEntryList &lstArchiveInfo)
+bool CUnLzx::View()
 {
 	CAnsiFile ArchiveFile;
 
 	OpenArchiveFile(ArchiveFile);
-	if (ViewArchive(ArchiveFile) == true)
-	{
-		lstArchiveInfo = m_EntryList;
-		return true;
-	}
-	return false;
+	return ViewArchive(ArchiveFile);
 }
 
+/*
+bool CUnLzx::GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const
+{
+	auto it = m_EntryList.cbegin();
+	auto itEnd = m_EntryList.cend();
+	while (it != itEnd)
+	{
+		CArchiveEntry *pEntry = it->second;
+
+		lstArchiveInfo.push_back(CArchiveEntry());
+		CArchiveEntry &Entry = lstArchiveInfo.back();
+
+		//Entry
+
+
+		++it;
+	}
+	return true;
+}
+*/
+
 // extract all files from archive to given path
-bool CUnLzx::Extract(const std::string &szOutPath)
+bool CUnLzx::Extract()
+{
+	CAnsiFile ArchiveFile;
+
+	OpenArchiveFile(ArchiveFile);
+	if (ViewArchive(ArchiveFile) == false)
+	{
+		// failed listing contents first
+		return false;
+	}
+	return ExtractArchive(ArchiveFile);
+}
+
+bool CUnLzx::SetExtractPath(const std::string &szOutPath)
 {
 	// allow resetting on another extract..
 	m_szExtractionPath = szOutPath;
@@ -947,8 +1009,9 @@ bool CUnLzx::Extract(const std::string &szOutPath)
 		// check that it is used by file store also..
 		CPathHelper::MakePath(m_szExtractionPath);
 	}
-	return ExtractArchive();
+	return true;
 }
+
 
 /*
 // verify integrity of archive-file
