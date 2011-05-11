@@ -21,6 +21,18 @@
 // archive info-header entry (archive-file header)
 struct tLzxInfoHeader
 {
+	enum tInfoFlags
+	{
+		INFO_DAMAGE_PROTECT  = 1,
+		INFO_FLAG_LOCKED  = 2
+	};
+	
+	/* STRUCTURE Info_Header
+	{
+	  UBYTE ID[3]; 0 - "LZX"
+	  UBYTE flags; 3 - INFO_FLAG_#?
+	  UBYTE[6]; 4
+	} */ /* SIZE = 10 */
 	unsigned char info_header[10];
 
 	tLzxInfoHeader()
@@ -41,6 +53,57 @@ struct tLzxInfoHeader
 // header of single entry in LZX-archive
 struct tLzxArchiveHeader
 {
+	/*
+	enum tHeaderFlag
+	{
+		HDR_FLAG_MERGED = 1
+	};
+	enum tHeaderProt
+	{
+		HDR_PROT_READ    = 1,
+		HDR_PROT_WRITE   = 2,
+		HDR_PROT_DELETE  = 4,
+		HDR_PROT_EXECUTE = 8,
+		HDR_PROT_ARCHIVE = 16,
+		HDR_PROT_HOLD    = 32,
+		HDR_PROT_SCRIPT  = 64,
+		HDR_PROT_PURE    = 128
+	};
+	enum tHeaderType
+	{
+		HDR_TYPE_MSDOS   = 0,
+		HDR_TYPE_WINDOWS = 1,
+		HDR_TYPE_OS2     = 2,
+		HDR_TYPE_AMIGA   = 10,
+		HDR_TYPE_UNIX    = 20
+	};
+	enum tHeaderPack
+	{
+		HDR_PACK_STORE    = 0,
+		HDR_PACK_NORMAL   = 2,
+		HDR_PACK_EOF      = 32
+	};
+	*/
+	
+	/* STRUCTURE Archive_Header
+	{
+	  UBYTE attributes; 0 - HDR_PROT_#?
+	  UBYTE; 1
+	  ULONG unpacked_length; 2 - FUCKED UP LITTLE ENDIAN SHIT
+	  ULONG packed_length; 6 - FUCKED UP LITTLE ENDIAN SHIT
+	  UBYTE machine_type; 10 - HDR_TYPE_#?
+	  UBYTE pack_mode; 11 - HDR_PACK_#?
+	  UBYTE flags; 12 - HDR_FLAG_#?
+	  UBYTE; 13
+	  UBYTE len_comment; 14 - comment length [0,79]
+	  UBYTE extract_ver; 15 - version needed to extract
+	  UBYTE; 16
+	  UBYTE; 17
+	  ULONG date; 18 - Packed_Date
+	  ULONG data_crc; 22 - FUCKED UP LITTLE ENDIAN SHIT
+	  ULONG header_crc; 26 - FUCKED UP LITTLE ENDIAN SHIT
+	  UBYTE filename_len; 30 - filename length
+	} */ /* SIZE = 31 */
 	unsigned char archive_header[31];
 
 	tLzxArchiveHeader()
@@ -99,6 +162,43 @@ struct tLzxArchiveHeader
 		return (archive_header[5] << 24) + (archive_header[4] << 16) + (archive_header[3] << 8) + archive_header[2]; /* unpack size */
 	}
 
+	/*
+	enum tDateShift
+	{
+		DATE_SHIFT_YEAR   = 17,
+		DATE_SHIFT_MONTH  = 23,
+		DATE_SHIFT_DAY    = 27,
+		DATE_SHIFT_HOUR   = 12,
+		DATE_SHIFT_MINUTE = 6,
+		DATE_SHIFT_SECOND = 0
+	};
+	enum tDateMask
+	{
+		DATE_MASK_YEAR    = 0x007E0000,
+		DATE_MASK_MONTH   = 0x07800000,
+		DATE_MASK_DAY     = 0xF8000000,
+		DATE_MASK_HOUR    = 0x0001F000,
+		DATE_MASK_MINUTE  = 0x00000FC0,
+		DATE_MASK_SECOND  = 0x0000003F
+	};
+	*/
+
+	/* STRUCTURE DATE_Unpacked
+	{
+	  UBYTE year; 80 - Year 0=1970 1=1971 63=2033
+	  UBYTE month; 81 - 0=january 1=february .. 11=december
+	  UBYTE day; 82
+	  UBYTE hour; 83
+	  UBYTE minute; 84
+	  UBYTE second; 85
+	} */ /* SIZE = 6 */
+	
+	/* STRUCTURE DATE_Packed
+	{
+	  UBYTE packed[4]; bit 0 is MSB, 31 is LSB
+	; bit # 0-4=Day 5-8=Month 9-14=Year 15-19=Hour 20-25=Minute 26-31=Second
+	} */ /* SIZE = 4 */
+	
 	unsigned int GetTimestamp()
 	{
 		return (archive_header[18] << 24) + (archive_header[19] << 16) + (archive_header[20] << 8) + archive_header[21]; /* date */
