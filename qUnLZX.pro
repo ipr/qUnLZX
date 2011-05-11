@@ -14,10 +14,12 @@ DEFINES += _CRT_SECURE_NO_WARNINGS
 SOURCES += main.cpp\
         mainwindow.cpp \
     UnLzx.cpp \
-    AnsiFile.cpp
+    AnsiFile.cpp \
+    CrcSum.cpp
 
 HEADERS  += mainwindow.h \
     UnLzx.h \
-    AnsiFile.h
+    AnsiFile.h \
+    CrcSum.h
 
 FORMS    += mainwindow.ui

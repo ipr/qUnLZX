@@ -16,7 +16,7 @@
 class CRCSum
 {
 protected:
-	static const unsigned int crc_table[256];
+	static const unsigned int m_crc_table[256];
 	
 	// calculated CRC-sum
 	unsigned int m_sum;
@@ -52,7 +52,7 @@ public:
 			unsigned int temp = ~m_sum; /* was (sum ^ 4294967295) */
 			do
 			{
-				temp = g_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
+				temp = m_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
 			} while(--tmplen);
 			m_sum = ~temp; /* was (temp ^ 4294967295) */
 		}

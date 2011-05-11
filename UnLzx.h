@@ -290,11 +290,144 @@ class CReadBuffer
 */
 
 
-/* // TODO: move actual decoding to own class (per compression type)
-class CDecoder
+// TODO: move actual decoding to own class (per compression type)
+// -> one compression/decompressio type (sliding window changes)
+class CLzxDecoder
 {
+protected:
+	static const unsigned char table_one[32];
+	static const unsigned int table_two[32];
+	static const unsigned int table_three[16];
+	static const unsigned char table_four[34];
+
+	// runtime-filled decoding tables
+	unsigned char offset_len[8];
+	unsigned short offset_table[128];
+	unsigned char huffman20_len[20];
+	unsigned short huffman20_table[96];
+	unsigned char literal_len[768];
+	unsigned short literal_table[5120];
+
+public:
+	// these need to be public for now..
+	unsigned char *source;
+	unsigned char *destination;
+	unsigned char *source_end;
+	unsigned char *destination_end;
+
+protected:
+
+	inline unsigned int reverse_position(const unsigned int fill_size, const unsigned int reverse_pos)
+	{
+		unsigned int fill = fill_size;
+		unsigned int reverse = reverse_pos;
+		unsigned int leaf = 0; /* always starts at zero */
+		
+		/* reverse the position */
+		do
+		{
+			leaf = (leaf << 1) + (reverse & 1);
+			reverse >>= 1;
+		} while(--fill);
+		
+		/* used after reversing*/
+		return leaf;
+	}
+	inline void fix_shift_control_word(int &shift, unsigned int &control)
+	{
+		shift += 16;
+		control += ((*source) << (8 + shift));
+		source++;
+		control += ((*source) << shift);
+		source++;
+	}
+	
+	inline void fix_shift_control_long(int &shift, unsigned int &control)
+	{
+		shift += 16;
+		control += ((*source) << 24);
+		source++;
+		control += ((*source) << 16);
+		source++;
+	}
+
+	// two cases only but shortens read_literal_table() slightly..
+	void symbol_longer_than_6_bits(int &shift, unsigned int &control, unsigned int &symbol)
+	{
+		/* when symbol is longer than 6 bits */
+		do
+		{
+			symbol = huffman20_table[((control >> 6) & 1) + (symbol << 1)];
+			if(!shift--)
+			{
+				fix_shift_control_long(shift, control);
+			}
+			control >>= 1;
+		} while(symbol >= 20);
+	}
+	
+	// just shortens read_literal_table() slightly..
+	void read_decrunch_length(int &shift, unsigned int &control, unsigned int &decrunch_length)
+	{
+		decrunch_length = (control & 255) << 16;
+		control >>= 8;
+		if((shift -= 8) < 0)
+		{
+			fix_shift_control_word(shift, control);
+		}
+		
+		decrunch_length += (control & 255) << 8;
+		control >>= 8;
+		if((shift -= 8) < 0)
+		{
+			fix_shift_control_word(shift, control);
+		}
+		
+		decrunch_length += (control & 255);
+		control >>= 8;
+		if((shift -= 8) < 0)
+		{
+			fix_shift_control_word(shift, control);
+		}
+	}
+
+	int read_build_offset_table(int &shift, unsigned int &control)
+	{
+		unsigned int temp = 0;
+		for(temp = 0; temp < 8; temp++)
+		{
+			offset_len[temp] = control & 7;
+			control >>= 3;
+			if((shift -= 3) < 0)
+			{
+				fix_shift_control_word(shift, control);
+			}
+		}
+		return make_decode_table(8, 7, offset_len, offset_table);
+	}
+	
+public:
+	CLzxDecoder() {}
+	
+	unsigned char *setup_buffers_for_decode(unsigned char *pReadBuffer, unsigned char *pDecrunchBuffer)
+	{
+		::memset(offset_len, 0, sizeof(unsigned char)*8);
+		::memset(literal_len, 0, sizeof(unsigned char)*768);
+		
+		// setup some globals
+		source = pReadBuffer + 16384;
+		source_end = source - 1024;
+		destination = pDecrunchBuffer + 258 + 65536;
+		destination_end = destination;
+		
+		return destination_end;
+	}
+	
+	int make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table);
+	int read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch_method, unsigned int &decrunch_length);
+	void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method, unsigned char *pdecrunchbuffer);
+	
 };
-*/
 
 class CUnLzx
 {
@@ -305,6 +438,7 @@ private:
 
 	// internal buffer for read information
 	CReadBuffer m_ReadBuffer;
+	CReadBuffer m_DecrunchBuffer;
 	
 	// archive info-header (file-type etc.)
 	tLzxInfoHeader m_InfoHeader;
@@ -320,11 +454,17 @@ private:
 	// (may change on each extract() call..)
 	std::string m_szExtractionPath;
 
+	CLzxDecoder m_Decoder;
+	
 	// current sizes for extraction
 	// (need to share for merged groups)
 	unsigned int m_pack_size;
 	//unsigned int m_unpack_size;
 
+	// decrunch&decode related status values
+	unsigned int m_decrunch_method;
+	unsigned int m_decrunch_length;
+	
 	// some counters for statistics of archive
 	unsigned long m_ulTotalUnpacked;
 	unsigned long m_ulTotalPacked;
@@ -385,12 +525,17 @@ public:
 	CUnLzx(const std::string &szArchive)
 		: m_szArchive(szArchive)
 		, m_nFileSize(0)
-		, m_ReadBuffer()
+		, m_ReadBuffer(16384) /* have a reasonable sized read buffer */
+		, m_DecrunchBuffer(258+65536+258) /* allow overrun for speed */
 		, m_InfoHeader()
 		, m_GroupList()
 		, m_EntryList()
 		, m_szExtractionPath()
+		, m_Decoder()
 		, m_pack_size(0)
+		//, m_unpack_size(0)
+		, m_decrunch_method(0)
+		, m_decrunch_length(0)
 		, m_ulTotalUnpacked(0)
 		, m_ulTotalPacked(0)
 		, m_ulTotalFiles(0)

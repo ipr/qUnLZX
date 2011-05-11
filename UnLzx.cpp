@@ -11,72 +11,53 @@
 
 #include "UnLzx.h"
 
-
-
-// TODO: make buffers variable in size..
-
-unsigned char read_buffer[16384]; /* have a reasonable sized read buffer */
-unsigned char decrunch_buffer[258+65536+258]; /* allow overrun for speed */
-
-unsigned char *source;
-unsigned char *destination;
-unsigned char *source_end;
-unsigned char *destination_end;
-
-unsigned int g_decrunch_method = 0;
-unsigned int g_decrunch_length = 0;
-
-unsigned char offset_len[8];
-unsigned short offset_table[128];
-unsigned char huffman20_len[20];
-unsigned short huffman20_table[96];
-unsigned char literal_len[768];
-unsigned short literal_table[5120];
-
-static const unsigned char table_one[32]=
+// pre-created decoding tables
+const unsigned char CLzxDecoder::table_one[32]=
 {
  0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13,14,14
 };
 
-static const unsigned int table_two[32]=
+const unsigned int CLzxDecoder::table_two[32]=
 {
  0,1,2,3,4,6,8,12,16,24,32,48,64,96,128,192,256,384,512,768,1024,
  1536,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152
 };
 
-static const unsigned int table_three[16]=
+const unsigned int CLzxDecoder::table_three[16]=
 {
  0,1,3,7,15,31,63,127,255,511,1023,2047,4095,8191,16383,32767
 };
 
-static const unsigned char table_four[34]=
+const unsigned char CLzxDecoder::table_four[34]=
 {
  0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,
  0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
 };
 
 
-/* reverse the order of the position's bits */
-inline unsigned int reverse_position(const unsigned int fill_size, const unsigned int reverse_pos)
-{
-	unsigned int fill = fill_size;
-	unsigned int reverse = reverse_pos;
-	unsigned int leaf = 0; /* always starts at zero */
-	
-	/* reverse the position */
-	do
-	{
-		leaf = (leaf << 1) + (reverse & 1);
-		reverse >>= 1;
-	} while(--fill);
-	
-	/* used after reversing*/
-	return leaf;
-}
+// runtime-filled decoding tables
+//unsigned char offset_len[8];
+//unsigned short offset_table[128];
+//unsigned char huffman20_len[20];
+//unsigned short huffman20_table[96];
+//unsigned char literal_len[768];
+//unsigned short literal_table[5120];
+
+// TODO: make buffers variable in size..
+
+// decoding related buffers
+//unsigned char read_buffer[16384]; /* have a reasonable sized read buffer */
+//unsigned char decrunch_buffer[258+65536+258]; /* allow overrun for speed */
+
+//unsigned char *source;
+//unsigned char *destination;
+//unsigned char *source_end;
+//unsigned char *destination_end;
+
 
 /* Build a fast huffman decode table from the symbol bit lengths.         */
 /* There is an alternate algorithm which is faster but also more complex. */
-int make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table)
+int CLzxDecoder::make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table)
 {
 	unsigned char bit_num = 1; // truly start at 1 (skip one increment..)
 	unsigned int pos = 0; /* consistantly used as the current position in the decode table */
@@ -169,83 +150,10 @@ int make_decode_table(int number_symbols, int table_size, unsigned char *length,
 	return 0;
 }
 
-// TODO: change names of globals later..
-// (hint compiler to inline function, can't force though..)
-inline void fix_shift_control_word(int &shift, unsigned int &control)
-{
-	shift += 16;
-	control += *source++ << (8 + shift);
-	control += *source++ << shift;
-}
-
-inline void fix_shift_control_long(int &shift, unsigned int &control)
-{
-	shift += 16;
-	control += *source++ << 24;
-	control += *source++ << 16;
-}
-
-// two cases only but shortens read_literal_table() slightly..
-void symbol_longer_than_6_bits(int &shift, unsigned int &control, unsigned int &symbol)
-{
-	/* when symbol is longer than 6 bits */
-	do
-	{
-		symbol = huffman20_table[((control >> 6) & 1) + (symbol << 1)];
-		if(!shift--)
-		{
-			fix_shift_control_long(shift, control);
-		}
-		control >>= 1;
-	} while(symbol >= 20);
-}
-
-// just shortens read_literal_table() slightly..
-void read_decrunch_length(int &shift, unsigned int &control, unsigned int &decrunch_length)
-{
-	decrunch_length = (control & 255) << 16;
-	
-	control >>= 8;
-	if((shift -= 8) < 0)
-	{
-		fix_shift_control_word(shift, control);
-	}
-	
-	decrunch_length += (control & 255) << 8;
-
-	control >>= 8;
-	if((shift -= 8) < 0)
-	{
-		fix_shift_control_word(shift, control);
-	}
-	
-	decrunch_length += (control & 255);
-
-	control >>= 8;
-	if((shift -= 8) < 0)
-	{
-		fix_shift_control_word(shift, control);
-	}
-}
-
-int read_build_offset_table(int &shift, unsigned int &control)
-{
-	unsigned int temp = 0;
-	for(temp = 0; temp < 8; temp++)
-	{
-		offset_len[temp] = control & 7;
-		control >>= 3;
-		if((shift -= 3) < 0)
-		{
-			fix_shift_control_word(shift, control);
-		}
-	}
-	return make_decode_table(8, 7, offset_len, offset_table);
-}
 
 /* Read and build the decrunch tables. There better be enough data in the */
 /* source buffer or it's stuffed. */
-int read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch_method, unsigned int &decrunch_length)
+int CLzxDecoder::read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch_method, unsigned int &decrunch_length)
 {
 	/* fix the control word if necessary */
 	if (shift < 0)
@@ -411,7 +319,7 @@ int read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch
 /* Fill up the decrunch buffer. Needs lots of overrun for both destination */
 /* and source buffers. Most of the time is spent in this routine so it's  */
 /* pretty damn optimized. */
-void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method)
+void CLzxDecoder::decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method, unsigned char *pdecrunchbuffer)
 {
 	do
 	{
@@ -496,7 +404,7 @@ void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsi
 				fix_shift_control_word(shift, control);
 			}
 
-			unsigned char *string = (decrunch_buffer + last_offset < destination) ?
+			unsigned char *string = (pdecrunchbuffer + last_offset < destination) ?
 					destination - last_offset : 
 					destination + 65536 - last_offset;
 
@@ -695,19 +603,13 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 //
 bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 {
-	::memset(offset_len, 0, sizeof(unsigned char)*8);
-	::memset(literal_len, 0, sizeof(unsigned char)*768);
-
-	// setup some globals
-	source = read_buffer + 16384;
-	source_end = source - 1024;
-	destination = decrunch_buffer + 258 + 65536;
-	destination_end = destination;
+	unsigned char *preadbuffer = m_ReadBuffer.GetBegin();
+	unsigned char *pdecrunchbuffer = m_DecrunchBuffer.GetBegin();
 	
 	unsigned int last_offset = 1;
 	unsigned int global_control = 0; /* initial control word */
 	int global_shift = -16;
-	unsigned char *pos = destination_end;
+	unsigned char *pos = m_Decoder.setup_buffers_for_decode(preadbuffer, pdecrunchbuffer);
 
 	// TODO: use merged group information in extraction
 	// TODO: check that already extracted isn't handled again?
@@ -737,13 +639,13 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 
 		while (unpack_size > 0)
 		{
-			if(pos == destination) /* time to fill the buffer? */
+			if(pos == m_Decoder.destination) /* time to fill the buffer? */
 			{
 				/* check if we have enough data and read some if not */
-				if(source >= source_end) /* have we exhausted the current read buffer? */
+				if(m_Decoder.source >= m_Decoder.source_end) /* have we exhausted the current read buffer? */
 				{
-					unsigned char *temp = read_buffer;
-					count = temp - source + 16384;
+					unsigned char *temp = preadbuffer;
+					count = temp - m_Decoder.source + 16384;
 					if(count)
 					{
 						/* copy the remaining overrun to the start of the buffer */
@@ -752,11 +654,11 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 						// -> can't use memcpy() safely..
 						do
 						{
-							*temp++ = *source++;
+							*temp++ = *m_Decoder.source++;
 						} while(--count);
 					}
-					source = read_buffer;
-					count = source - temp + 16384;
+					m_Decoder.source = preadbuffer;
+					count = m_Decoder.source - temp + 16384;
 
 					if (m_pack_size < count) 
 					{
@@ -768,57 +670,58 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 					}
 					m_pack_size -= count;
 					temp += count;
-					if(source >= temp) 
+					if (m_Decoder.source >= temp) 
 					{
 						break; /* argh! no more data! */
 					}
 				} /* if(source >= source_end) */
 
 				/* check if we need to read the tables */
-				if (g_decrunch_length <= 0)
+				if (m_decrunch_length <= 0)
 				{
-					if (read_literal_table(global_control, global_shift, g_decrunch_method, g_decrunch_length))
+					if (m_Decoder.read_literal_table(global_control, global_shift, m_decrunch_method, m_decrunch_length))
 					{
 						/* argh! can't make huffman tables! */
 						throw IOException("can't make huffman tables!");
 						//break;
 					}
 				}
+				
 				/* unpack some data */
-				if(destination >= decrunch_buffer + 258 + 65536)
+				if(m_Decoder.destination >= pdecrunchbuffer + 258 + 65536)
 				{
-					count = (destination - decrunch_buffer) - 65536;
+					count = (m_Decoder.destination - pdecrunchbuffer) - 65536;
 					if(count)
 					{
-						destination = decrunch_buffer;
-						unsigned char *temp = destination + 65536;
+						m_Decoder.destination = pdecrunchbuffer;
+						unsigned char *temp = m_Decoder.destination + 65536;
 						/* copy the overrun to the start of the buffer */
 						// note: in theory could replace loop with
 						// ::memcpy(destination, temp, count);
 						// but may overlap memory areas so can't use memcpy()..
 						do
 						{
-							*destination++ = *temp++;
+							*m_Decoder.destination++ = *temp++;
 						} while(--count);
 					}
-					pos = destination;
+					pos = m_Decoder.destination;
 				}
 				
-				destination_end = destination + g_decrunch_length;
-				if(destination_end > decrunch_buffer + 258 + 65536)
+				m_Decoder.destination_end = m_Decoder.destination + m_decrunch_length;
+				if (m_Decoder.destination_end > pdecrunchbuffer + 258 + 65536)
 				{
-					destination_end = decrunch_buffer + 258 + 65536;
+					m_Decoder.destination_end = pdecrunchbuffer + 258 + 65536;
 				}
 				
-				unsigned char *temp = destination;
+				unsigned char *temp = m_Decoder.destination;
 
-				decrunch(global_control, global_shift, last_offset, g_decrunch_method);
+				m_Decoder.decrunch(global_control, global_shift, last_offset, m_decrunch_method, pdecrunchbuffer);
 
-				g_decrunch_length -= (destination - temp);
+				m_decrunch_length -= (m_Decoder.destination - temp);
 			} /* if(pos == destination) */
 
 			/* calculate amount of data we can use before we need to fill the buffer again */
-			count = destination - pos;
+			count = m_Decoder.destination - pos;
 			if(count > unpack_size) 
 			{
 				count = unpack_size; /* take only what we need */
