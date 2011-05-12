@@ -36,26 +36,6 @@ const unsigned char CLzxDecoder::table_four[34]=
 };
 
 
-// runtime-filled decoding tables
-//unsigned char offset_len[8];
-//unsigned short offset_table[128];
-//unsigned char huffman20_len[20];
-//unsigned short huffman20_table[96];
-//unsigned char literal_len[768];
-//unsigned short literal_table[5120];
-
-// TODO: make buffers variable in size..
-
-// decoding related buffers
-//unsigned char read_buffer[16384]; /* have a reasonable sized read buffer */
-//unsigned char decrunch_buffer[258+65536+258]; /* allow overrun for speed */
-
-//unsigned char *source;
-//unsigned char *destination;
-//unsigned char *source_end;
-//unsigned char *destination_end;
-
-
 /* Build a fast huffman decode table from the symbol bit lengths.         */
 /* There is an alternate algorithm which is faster but also more complex. */
 int CLzxDecoder::make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table)
@@ -190,21 +170,12 @@ int CLzxDecoder::read_literal_table(unsigned int &control, int &shift, unsigned 
 		unsigned int pos = 0;
 		unsigned int fix = 1;
 		unsigned int max_symbol = 256;
-		unsigned int temp = 0;
 
 		unsigned int count = 0;
 		
 		do
 		{
-			for(temp = 0; temp < 20; temp++)
-			{
-				huffman20_len[temp] = control & 15;
-				control >>= 4;
-				if((shift -= 4) < 0)
-				{
-					fix_shift_control_word(shift, control);
-				}
-			}
+			build_huffman_len_table(shift, control);
 			
 			if (make_decode_table(20, 6, huffman20_len, huffman20_table) != 0)
 			{
@@ -215,6 +186,8 @@ int CLzxDecoder::read_literal_table(unsigned int &control, int &shift, unsigned 
 
 			do
 			{
+				unsigned int temp = 0;
+
 				unsigned int symbol = huffman20_table[control & 63];
 				if(symbol >= 20)
 				{
@@ -321,7 +294,7 @@ int CLzxDecoder::read_literal_table(unsigned int &control, int &shift, unsigned 
 /* Fill up the decrunch buffer. Needs lots of overrun for both destination */
 /* and source buffers. Most of the time is spent in this routine so it's  */
 /* pretty damn optimized. */
-void CLzxDecoder::decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method, unsigned char *pdecrunchbuffer)
+void CLzxDecoder::decrunch(unsigned int &control, int &shift, unsigned int &last_offset, const unsigned int &decrunch_method)
 {
 	do
 	{
@@ -361,6 +334,8 @@ void CLzxDecoder::decrunch(unsigned int &control, int &shift, unsigned int &last
 		}
 		else
 		{
+			// must make copy of previous n symbols to decrunch-buffer?
+
 			symbol -= 256;
 			
 			unsigned int temp = symbol & 31;
@@ -406,17 +381,7 @@ void CLzxDecoder::decrunch(unsigned int &control, int &shift, unsigned int &last
 				fix_shift_control_word(shift, control);
 			}
 
-			unsigned char *string = (pdecrunchbuffer + last_offset < destination) ?
-					destination - last_offset : 
-					destination + 65536 - last_offset;
-
-			// note: in theory could replace loop with
-			// ::memcpy(destination, string, count);
-			// but may overlap memory areas so can't use memcpy()..
-			do
-			{
-				*destination++ = *string++;
-			} while(--count);
+			copy_decrunch_string(last_offset, count);
 		}
 	} while((destination < destination_end) && (source < source_end));
 }
@@ -544,10 +509,11 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 //
 bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &vEntryList)
 {
-	unsigned char *preadbuffer = m_ReadBuffer.GetBegin();
-	unsigned char *pdecrunchbuffer = m_DecrunchBuffer.GetBegin();
-	
-	m_Decoder.setup_buffers_for_decode(preadbuffer, pdecrunchbuffer);
+	unsigned int last_offset = 1;
+	unsigned int global_control = 0; // initial control word 
+	int global_shift = -16;
+
+	m_Decoder.setup_buffers_for_decode(&m_ReadBuffer, &m_DecrunchBuffer);
 
 	// TODO: use merged group information in extraction
 	// TODO: check that already extracted isn't handled again?
@@ -579,40 +545,19 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &
 		CAnsiFile OutFile;
 		PrepareEntryForWriting(*pEntry, OutFile);
 
+		// per-entry unpack
 		unsigned int unpack_size = pEntry->m_ulUnpackedSize;
-
 		while (unpack_size > 0)
 		{
 			/* time to fill the buffer? */
 			if (m_Decoder.is_time_to_fill_buffer() == true)
 			{
 				/* check if we have enough data and read some if not */
-				if(m_Decoder.source >= m_Decoder.source_end) /* have we exhausted the current read buffer? */
+				if (m_Decoder.is_readbuffer_exhausted() == true) /* have we exhausted the current read buffer? */
 				{
 					/* copy the remaining overrun to the start of the buffer */
-					//unsigned char *temp = preadbuffer; // start of buf
-					unsigned int count = (preadbuffer - m_Decoder.source) + 16384; // size before moving
-					if (count > 0)
-					{
-						// data remains -> move to beginning
-						/*
-						// check for overlap: uncomment this if not supported by memmove()
-						if ((preadbuffer + count) > m_Decoder.source)
-						{
-							// need overlapped moving
-							unsigned char *temp = preadbuffer; // start of buf
-							do
-							{
-								*temp++ = *m_Decoder.source++;
-							} while(--count);
-						}
-						*/
-						::memmove(preadbuffer, m_Decoder.source, count);
-					}
-					unsigned char *pEnd = preadbuffer + count;
-
-					m_Decoder.source = preadbuffer;
-					count = (m_Decoder.source - pEnd) + 16384; // size after moving
+					unsigned int count = 0;
+					unsigned char *pEnd = m_Decoder.move_overrun_on_exhaust(count);
 
 					// check remaining packed-data to read
 					if (m_pack_size < count) 
@@ -640,7 +585,7 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &
 				/* check if we need to read the tables */
 				if (m_decrunch_length <= 0)
 				{
-					if (m_Decoder.read_literal_table(m_decrunch_method, m_decrunch_length))
+					if (m_Decoder.read_literal_table(global_control, global_shift, m_decrunch_method, m_decrunch_length))
 					{
 						/* argh! can't make huffman tables! */
 						throw IOException("can't make huffman tables!");
@@ -650,7 +595,7 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &
 
 				// unpack/decrunch some data,
 				// update count: how much was decrunched
-				m_decrunch_length -= m_Decoder.decrunch_data(m_decrunch_method, m_decrunch_length, pdecrunchbuffer);
+				m_decrunch_length -= m_Decoder.decrunch_data(global_control, global_shift, last_offset, m_decrunch_method, m_decrunch_length);
 
 			} /* if(pos == destination) */
 
@@ -812,6 +757,7 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 				throw IOException("FSeek(Data): failed to seek merge-group start");
 			}
 			vEntryList = pGroup->m_MergedList;
+			m_pack_size = pGroup->m_ulMergeSize;
 		}
 		else
 		{
@@ -821,12 +767,13 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 				throw IOException("FSeek(Data): failed to seek merge-group start");
 			}
 			vEntryList.push_back(pEntry);
+			m_pack_size = pEntry->m_ulPackedSize;
 		}
 
 		if (pEntry->m_ulPackedSize)
 		{
 			bool bRet = false;
-			m_pack_size = pEntry->m_ulPackedSize;
+			//m_pack_size = pEntry->m_ulPackedSize;
 
 			// TODO: give merge-group for extraction..
 			switch (pEntry->m_PackMode)
@@ -945,7 +892,6 @@ bool CUnLzx::View()
 	return ViewArchive(ArchiveFile);
 }
 
-/*
 bool CUnLzx::GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const
 {
 	auto it = m_EntryList.cbegin();
@@ -954,17 +900,17 @@ bool CUnLzx::GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const
 	{
 		CArchiveEntry *pEntry = it->second;
 
+		/*
 		lstArchiveInfo.push_back(CArchiveEntry());
 		CArchiveEntry &Entry = lstArchiveInfo.back();
-
-		//Entry
+		Entry = (*pEntry);
+		*/
 
 
 		++it;
 	}
 	return true;
 }
-*/
 
 // extract all files from archive to given path
 bool CUnLzx::Extract()

@@ -573,15 +573,6 @@ protected:
 	unsigned char literal_len[768];
 	unsigned short literal_table[5120];
 
-public:
-	// these need to be public for now..
-	unsigned char *source;
-	unsigned char *destination;
-	unsigned char *source_end;
-	unsigned char *destination_end;
-
-	unsigned char *m_pos;
-	
 protected:
 
 	inline unsigned int reverse_position(const unsigned int fill_size, const unsigned int reverse_pos)
@@ -684,55 +675,121 @@ protected:
 		return make_decode_table(8, 7, offset_len, offset_table);
 	}
 
+	void build_huffman_len_table(int &shift, unsigned int &control)
+	{
+		unsigned int temp = 0;
+		for(temp = 0; temp < 20; temp++)
+		{
+			huffman20_len[temp] = control & 15;
+			control >>= 4;
+			if((shift -= 4) < 0)
+			{
+				fix_shift_control_word(shift, control);
+			}
+		}
+	}
+
+	// this fucker changes pointer for position -> must access in larger scope..
+	void copy_decrunch_string(unsigned int &last_offset, unsigned int &count)
+	{
+		unsigned char *string = (m_pDecrunchData + last_offset < destination) ?
+				destination - last_offset : 
+				destination + 65536 - last_offset;
+
+		// note: in theory could replace loop with
+		// ::memcpy(destination, string, count);
+		// but may overlap memory areas so can't use memcpy()..
+		do
+		{
+			*destination++ = *string++;
+		} while(--count);
+	}
+
 	//unsigned int unpack_size;
 	//unsigned int pack_size;
 	
-	unsigned int m_last_offset;
-	unsigned int m_global_control; /* initial control word */
-	int m_global_shift;
+	//unsigned int m_last_offset;
+	//unsigned int m_global_control; /* initial control word */
+	//int m_global_shift;
 
+	CReadBuffer *m_pReadBuffer;
+	CReadBuffer *m_pDecrunchBuffer;
+
+	// temp, remove later
+	unsigned char *m_pReadData;
+	unsigned char *m_pDecrunchData;
+
+public:
+	// these need to be public for now..
+	unsigned char *source;
+	unsigned char *destination;
+	unsigned char *source_end;
+	unsigned char *destination_end;
+
+	unsigned char *m_pos;
+	
 
 public:
 	CLzxDecoder() {}
 	
-	void setup_buffers_for_decode(unsigned char *pReadBuffer, unsigned char *pDecrunchBuffer)
+	void setup_buffers_for_decode(CReadBuffer *pReadBuffer, CReadBuffer *pDecrunchBuffer)
 	{
+		m_pReadBuffer = pReadBuffer;
+		m_pReadData = pReadBuffer->GetBegin();
+		m_pDecrunchBuffer = pDecrunchBuffer;
+		m_pDecrunchData = pDecrunchBuffer->GetBegin();
+
 		::memset(offset_len, 0, sizeof(unsigned char)*8);
 		::memset(literal_len, 0, sizeof(unsigned char)*768);
 		
-		m_last_offset = 1;
-		m_global_control = 0; // initial control word 
-		m_global_shift = -16;
-
 		// setup some globals
-		source = pReadBuffer + 16384;
-		source_end = source - 1024;
-		destination = pDecrunchBuffer + 258 + 65536;
+		source = pReadBuffer->GetAt(16384);
+		source_end = pReadBuffer->GetAt(16384 - 1024);
+		destination = pDecrunchBuffer->GetAt(258 + 65536);
 		destination_end = destination;
 
 		m_pos = destination;
-		//return m_pos;
+	}
+
+	bool is_readbuffer_exhausted()
+	{
+		if (source >= source_end)
+		{
+			return true;
+		}
+		return false;
+	}
+
+	/* copy the remaining overrun to the start of the buffer */
+	unsigned char *move_overrun_on_exhaust(unsigned int &count)
+	{
+		/* copy the remaining overrun to the start of the buffer */
+		count = (m_pReadData - source) + 16384; // size before moving
+		if (count > 0)
+		{
+			::memmove(m_pReadData, source, count);
+		}
+
+		unsigned char *pEnd = m_pReadData + count;
+		source = m_pReadData;
+		count = (source - pEnd) + 16384; // size after moving
+		return pEnd;
 	}
 	
 	int make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table);
 	int read_literal_table(unsigned int &control, int &shift, unsigned int &decrunch_method, unsigned int &decrunch_length);
 
-	int read_literal_table(unsigned int &decrunch_method, unsigned int &decrunch_length)
-	{
-		return read_literal_table(m_global_control, m_global_shift, decrunch_method, decrunch_length);
-	}
+	void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, const unsigned int &decrunch_method);
 
-	void decrunch(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method, unsigned char *pdecrunchbuffer);
-
-	unsigned int decrunch_data(unsigned int &decrunch_method, unsigned int &decrunch_length, unsigned char *pdecrunchbuffer)
+	unsigned int decrunch_data(unsigned int &control, int &shift, unsigned int &last_offset, unsigned int &decrunch_method, unsigned int &decrunch_length)
 	{
 		/* unpack some data */
-		unsigned int count = unpack(pdecrunchbuffer, decrunch_length);
+		unsigned int count = unpack(decrunch_length);
 
 		// take before decrunch
 		unsigned char *ptempdest = destination;
 
-		decrunch(m_global_control, m_global_shift, m_last_offset, decrunch_method, pdecrunchbuffer);
+		decrunch(control, shift, last_offset, decrunch_method);
 
 		// return count: how much was decrunched
 		return (destination - ptempdest);
@@ -747,17 +804,17 @@ public:
 		return false;
 	}
 
-	unsigned int unpack(unsigned char *pdecrunchbuffer, unsigned int &decrunch_length)
+	unsigned int unpack(unsigned int &decrunch_length)
 	{
 		unsigned int count = 0;
 		
 		/* unpack some data */
-		if (destination >= pdecrunchbuffer + 258 + 65536)
+		if (destination >= m_pDecrunchData + 258 + 65536)
 		{
-			count = (destination - pdecrunchbuffer) - 65536;
+			count = (destination - m_pDecrunchData) - 65536;
 			if (count)
 			{
-				destination = pdecrunchbuffer;
+				destination = m_pDecrunchData;
 				
 				unsigned char *temp = destination + 65536;
 				/* copy the overrun to the start of the buffer */
@@ -773,9 +830,9 @@ public:
 		}
 		
 		destination_end = destination + decrunch_length;
-		if (destination_end > pdecrunchbuffer + 258 + 65536)
+		if (destination_end > m_pDecrunchData + 258 + 65536)
 		{
-			destination_end = pdecrunchbuffer + 258 + 65536;
+			destination_end = m_pDecrunchData + 258 + 65536;
 		}
 		
 		return count;
@@ -850,7 +907,7 @@ private:
 		m_ulTotalUnpacked = 0;
 		m_ulTotalPacked = 0;
 		m_ulTotalFiles = 0;
-		//m_ulMergeSize = 0;
+		m_ulMergeSize = 0;
 	}
 	void ClearItems()
 	{
@@ -942,7 +999,7 @@ public:
 	//
 	bool View();
 
-	//bool GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const;
+	bool GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const;
 
 	// extract a single archive:
 	// give path where files are extracted to,
