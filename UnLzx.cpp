@@ -451,6 +451,7 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	}
 
 	CArchiveEntry *pEntry = new CArchiveEntry(lOffset, pBuf, 31);
+	pEntry->m_lEntryOffset += 31; // increment for data pos
 
 	// temp for counting crc-checksum of entry-header,
 	// verify by counting that crc in file is same
@@ -469,6 +470,7 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	{
 		throw IOException("Failed reading string: filename");
 	}
+	pEntry->m_lEntryOffset += uiStringLen; // increment for data pos
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
 	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
@@ -480,6 +482,7 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	{
 		throw IOException("Failed reading string: comment");
 	}
+	pEntry->m_lEntryOffset += uiStringLen; // increment for data pos
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
 	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
@@ -499,6 +502,9 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	// parse some entry-header information for later processing
 	pEntry->ParseHeader();
 	
+	// keep this entry
+	m_EntryList.insert(tArchiveEntryList::value_type(pEntry->m_lEntryOffset, pEntry));
+
 	// entry header read successfully
 	return pEntry;
 }
@@ -512,6 +518,9 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &
 	unsigned int last_offset = 1;
 	unsigned int global_control = 0; // initial control word 
 	int global_shift = -16;
+
+	m_decrunch_method = 0;
+	m_decrunch_length = 0;
 
 	m_Decoder.setup_buffers_for_decode(&m_ReadBuffer, &m_DecrunchBuffer);
 
@@ -752,20 +761,24 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 		{
 			// merged-files group compression..
 			CMergeGroup *pGroup = pEntry->m_pGroup;
+			/*
 			if (ArchiveFile.Seek(pGroup->m_lGroupOffset, SEEK_SET) == false)
 			{
 				throw IOException("FSeek(Data): failed to seek merge-group start");
 			}
+			*/
 			vEntryList = pGroup->m_MergedList;
 			m_pack_size = pGroup->m_ulMergeSize;
 		}
 		else
 		{
 			// single-file compression..
+			/*
 			if (ArchiveFile.Seek(pEntry->m_lEntryOffset, SEEK_SET) == false)
 			{
 				throw IOException("FSeek(Data): failed to seek merge-group start");
 			}
+			*/
 			vEntryList.push_back(pEntry);
 			m_pack_size = pEntry->m_ulPackedSize;
 		}
@@ -774,6 +787,13 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 		{
 			bool bRet = false;
 			//m_pack_size = pEntry->m_ulPackedSize;
+
+			// note: unpacking is very sensitive to file-position,
+			// try to improve metadata to locate correctly when necessary..
+			if (ArchiveFile.Seek(pEntry->m_lEntryOffset, SEEK_SET) == false)
+			{
+				throw IOException("FSeek(Data): failed to seek merge-group start");
+			}
 
 			// TODO: give merge-group for extraction..
 			switch (pEntry->m_PackMode)
@@ -824,9 +844,6 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 			// -> no more files in archive
 			return true;
 		}
-
-		// keep this entry
-		m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset, pEntry));
 		
 		// count some statistical information
 		AddCounters(*pEntry);
