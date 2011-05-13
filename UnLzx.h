@@ -85,6 +85,7 @@ struct tLzxArchiveHeader
 	};
 
 	// file-entry packing mode
+	// (not used as mask, enum-only)
 	enum tHeaderPackMode
 	{
 		HDR_PACK_STORE    = 0,
@@ -481,16 +482,17 @@ public:
 			m_MachineType = tLzxArchiveHeader::HDR_TYPE_MSDOS;
 		}
 		
+		// pack-mode: not used as flags, enum-only
 		unsigned char ucPackMode = m_Header.GetPackMode();
-		if (ucPackMode & tLzxArchiveHeader::HDR_PACK_NORMAL)
+		if (ucPackMode == tLzxArchiveHeader::HDR_PACK_NORMAL)
 		{
 			m_PackMode = tLzxArchiveHeader::HDR_PACK_NORMAL;
 		}
-		else if (ucPackMode & tLzxArchiveHeader::HDR_PACK_STORE)
+		else if (ucPackMode == tLzxArchiveHeader::HDR_PACK_STORE)
 		{
 			m_PackMode = tLzxArchiveHeader::HDR_PACK_STORE;
 		}
-		else if (ucPackMode & tLzxArchiveHeader::HDR_PACK_EOF)
+		else if (ucPackMode == tLzxArchiveHeader::HDR_PACK_EOF)
 		{
 			m_PackMode = tLzxArchiveHeader::HDR_PACK_EOF;
 		}
