@@ -180,18 +180,24 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 		auto itEnd = lstArchiveInfo.end();
 		while (it != itEnd)
 		{
-			CArchiveEntry &Entry = (*(it->second));
-			
+			CArchiveEntry *pEntry = it->second;
+
+			/*
 			// skip "merge" instances (if any)
-			if (Entry.m_szFileName.length() < 1)
+			if (pEntry->m_szFileName.length() < 1)
 			{
+				// test
+				//QTreeWidgetItem *pTopItem = new QTreeWidgetItem((QTreeWidgetItem*)0);
+				//pTopItem->setText(0, "(Merged file)");
+				
 				++it;
 				continue;
 			}
+			*/
 
 			QString szPath;
 			QString szFile;
-			QString szName = QString::fromStdString(Entry.m_szFileName);
+			QString szName = QString::fromStdString(pEntry->m_szFileName);
 			
 			if (SplitPathFileName(szName, szPath, szFile) == false)
 			{
@@ -209,75 +215,46 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 				ui->treeWidget->addTopLevelItem(pTopItem);
 				m_PathToItem.insert(szPath, pTopItem);
 			}
-
-			// add sub-item of file
-			QTreeWidgetItem *pSubItem = new QTreeWidgetItem(pTopItem);
-			pSubItem->setText(0, szFile);
-			pSubItem->setText(1, QString::number(Entry.m_ulUnpackedSize)); // always given
-			if (Entry.m_bPackedSizeAvailable == true) // not merged
+			
+			/*
+			// experimental, show merged-files as groups in display
+			if (pEntry->m_pGroup != nullptr)
 			{
-				pSubItem->setText(2, QString::number(Entry.m_ulPackedSize)); // always given
+				QTreeWidgetItem *pGroupItem = m_GroupToItem.value(pEntry->m_pGroup, nullptr);
+				if (pGroupItem == nullptr)
+				{
+					pGroupItem = new QTreeWidgetItem(pTopItem);
+					pTopItem->addChild(pGroupItem);
+					m_GroupToItem.insert(pEntry->m_pGroup, pGroupItem);
+				}
+				pGroupItem->setText(0, "(Merged group)");
+				pGroupItem->setText(1, QString::number(pEntry->m_pGroup->m_ulGroupUnpackedSize)); 
+				pGroupItem->setText(2, QString::number(pEntry->m_pGroup->m_ulGroupPackedSize)); 
+				
+				// add sub-item of file
+				QTreeWidgetItem *pSubItem = new QTreeWidgetItem(pGroupItem);
+				
+				EntryToViewItem(szFile, pEntry, pSubItem);
+				pGroupItem->addChild(pSubItem);
+				m_EntryToItem.insert(pEntry, pSubItem);
 			}
 			else
 			{
-				// merged? (no packed-size available)
-				//pSubItem->setText(2, "n/a");
-				pSubItem->setText(2, "(Merged)");
+				// add sub-item of file
+				QTreeWidgetItem *pSubItem = new QTreeWidgetItem(pTopItem);
+				
+				EntryToViewItem(szFile, pEntry, pSubItem);
+				pTopItem->addChild(pSubItem);
+				m_EntryToItem.insert(pEntry, pSubItem);
 			}
-			
-			/*
-			QDateTime Stamp;
-			Stamp.setDate(QDate(year, month, day));
-			Stamp.setTime(QTime(hour, minute, second));
 			*/
-
-			QString szTime;
-			szTime.sprintf("%02ld:%02ld:%02ld", 
-						   Entry.m_Timestamp.hour, 
-						   Entry.m_Timestamp.minute, 
-						   Entry.m_Timestamp.second);
-			pSubItem->setText(3, szTime);
-			//pSubItem->setText(3, QTime(hour, minute, second).toString());
-
-			QString szDate;
-			szDate.sprintf("%.2ld-%.2ld-%4ld", 
-						   Entry.m_Timestamp.day, 
-						   Entry.m_Timestamp.month, 
-						   Entry.m_Timestamp.year);
-			pSubItem->setText(4, szDate);
-			//pSubItem->setText(4, QDate(year, month, day).toString());
-
-			// file-attributes (Amiga-style: HSPA RWED)
-			QString szAttribs;
-			szAttribs.sprintf("%c%c%c%c%c%c%c%c", 
-							  (Entry.m_Attributes.h) ? 'h' : '-',
-							  (Entry.m_Attributes.s) ? 's' : '-',
-							  (Entry.m_Attributes.p) ? 'p' : '-',
-							  (Entry.m_Attributes.a) ? 'a' : '-',
-							  (Entry.m_Attributes.r) ? 'r' : '-',
-							  (Entry.m_Attributes.w) ? 'w' : '-',
-							  (Entry.m_Attributes.e) ? 'e' : '-',
-							  (Entry.m_Attributes.d) ? 'd' : '-');
-			pSubItem->setText(5, szAttribs);
 			
-			// packing mode
-			pSubItem->setText(6, QString::number((int)Entry.m_PackMode));
+			// add sub-item of file
+			QTreeWidgetItem *pSubItem = new QTreeWidgetItem(pTopItem);
 			
-			QString szCrcA; // CRC of entry in archive
-			szCrcA.sprintf("%x", Entry.m_uiCrc);
-			pSubItem->setText(7, szCrcA);
-
-			QString szCrcD; // CRC of data
-			szCrcD.sprintf("%x", Entry.m_uiDataCrc);
-			pSubItem->setText(8, szCrcD);
-
-			// machine-type enum
-			pSubItem->setText(9, QString::number((int)Entry.m_MachineType));
-			
-			// file-related comment (if any stored)
-			pSubItem->setText(10, QString::fromStdString(Entry.m_szComment));
-			
+			EntryToViewItem(szFile, pEntry, pSubItem);
 			pTopItem->addChild(pSubItem);
+			m_EntryToItem.insert(pEntry, pSubItem);
 			
 			++it;
 		}
@@ -294,6 +271,67 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 	}
 }
 
+void MainWindow::EntryToViewItem(QString &szFile, CArchiveEntry *pEntry, QTreeWidgetItem *pSubItem)
+{
+	pSubItem->setText(0, szFile);
+	pSubItem->setText(1, QString::number(pEntry->m_ulUnpackedSize)); // always given
+	if (pEntry->m_bPackedSizeAvailable == true) // not merged
+	{
+		pSubItem->setText(2, QString::number(pEntry->m_ulPackedSize)); // always given
+	}
+	else
+	{
+		// merged? (no packed-size available)
+		//pSubItem->setText(2, "n/a");
+		pSubItem->setText(2, "(Merged)");
+	}
+	
+	
+	QString szTime;
+	szTime.sprintf("%02ld:%02ld:%02ld", 
+				   pEntry->m_Timestamp.hour, 
+				   pEntry->m_Timestamp.minute, 
+				   pEntry->m_Timestamp.second);
+	pSubItem->setText(3, szTime);
+	
+	QString szDate;
+	szDate.sprintf("%.2ld-%.2ld-%4ld", 
+				   pEntry->m_Timestamp.day, 
+				   pEntry->m_Timestamp.month, 
+				   pEntry->m_Timestamp.year);
+	pSubItem->setText(4, szDate);
+	
+	// file-attributes (Amiga-style: HSPA RWED)
+	QString szAttribs;
+	szAttribs.sprintf("%c%c%c%c%c%c%c%c", 
+					  (pEntry->m_Attributes.h) ? 'h' : '-',
+					  (pEntry->m_Attributes.s) ? 's' : '-',
+					  (pEntry->m_Attributes.p) ? 'p' : '-',
+					  (pEntry->m_Attributes.a) ? 'a' : '-',
+					  (pEntry->m_Attributes.r) ? 'r' : '-',
+					  (pEntry->m_Attributes.w) ? 'w' : '-',
+					  (pEntry->m_Attributes.e) ? 'e' : '-',
+					  (pEntry->m_Attributes.d) ? 'd' : '-');
+	pSubItem->setText(5, szAttribs);
+	
+	// packing mode
+	pSubItem->setText(6, QString::number((int)pEntry->m_PackMode));
+	
+	QString szCrcA; // CRC of entry in archive
+	szCrcA.sprintf("%x", pEntry->m_uiCrc);
+	pSubItem->setText(7, szCrcA);
+	
+	QString szCrcD; // CRC of data
+	szCrcD.sprintf("%x", pEntry->m_uiDataCrc);
+	pSubItem->setText(8, szCrcD);
+	
+	// machine-type enum
+	pSubItem->setText(9, QString::number((int)pEntry->m_MachineType));
+	
+	// file-related comment (if any stored)
+	pSubItem->setText(10, QString::fromStdString(pEntry->m_szComment));
+	
+}
 
 void MainWindow::on_actionAbout_triggered()
 {

@@ -160,6 +160,12 @@ struct tLzxArchiveHeader
 		return archive_header[12]; /* flags */
 	}
 
+	unsigned char GetExtractVersion()
+	{
+		// get version needed to extract (details?)
+		return archive_header[15]; /* extract_ver */
+	}
+	
 	unsigned int GetFileNameLength()
 	{
 		return archive_header[30]; /* filename length */
@@ -172,11 +178,13 @@ struct tLzxArchiveHeader
 
 	unsigned int GetPackSize()
 	{
+		// packed size of file (may be zero on merged)
 		return (archive_header[9] << 24) + (archive_header[8] << 16) + (archive_header[7] << 8) + archive_header[6]; /* packed size */
 	}
 
 	unsigned int GetUnpackSize()
 	{
+		// original/unpacked size of file
 		return (archive_header[5] << 24) + (archive_header[4] << 16) + (archive_header[3] << 8) + archive_header[2]; /* unpack size */
 	}
 
@@ -248,6 +256,11 @@ typedef struct PackedTimestamp
 		second = 0;
 	}
 	
+	/* STRUCTURE DATE_Packed
+	{
+	  UBYTE packed[4]; bit 0 is MSB, 31 is LSB
+	; bit # 0-4=Day 5-8=Month 9-14=Year 15-19=Hour 20-25=Minute 26-31=Second
+	} */ /* SIZE = 4 */
 	void SetParseStamp(const unsigned int uiPackedStamp)
 	{
 		m_uiTimeStamp = uiPackedStamp;
@@ -459,25 +472,29 @@ public:
 		m_ulPackedSize = m_Header.GetPackSize();
 		
 		m_Timestamp.SetParseStamp(m_Header.GetPackedTimestamp());
+		
+		// test, always at least "1.0" ? (10)
+		//unsigned char ucExtractVer = m_Header.GetExtractVersion();
 
+		// use as enum instead of flags
 		unsigned char ucMachine = m_Header.GetMachineType();
-		if (ucMachine & tLzxArchiveHeader::HDR_TYPE_AMIGA)
+		if (ucMachine == tLzxArchiveHeader::HDR_TYPE_AMIGA)
 		{
 			m_MachineType = tLzxArchiveHeader::HDR_TYPE_AMIGA;
 		}
-		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_UNIX)
+		else if (ucMachine == tLzxArchiveHeader::HDR_TYPE_UNIX)
 		{
 			m_MachineType = tLzxArchiveHeader::HDR_TYPE_UNIX;
 		}
-		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_OS2)
+		else if (ucMachine == tLzxArchiveHeader::HDR_TYPE_OS2)
 		{
 			m_MachineType = tLzxArchiveHeader::HDR_TYPE_OS2;
 		}
-		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_WINDOWS)
+		else if (ucMachine == tLzxArchiveHeader::HDR_TYPE_WINDOWS)
 		{
 			m_MachineType = tLzxArchiveHeader::HDR_TYPE_WINDOWS;
 		}
-		else if (ucMachine & tLzxArchiveHeader::HDR_TYPE_MSDOS)
+		else if (ucMachine == tLzxArchiveHeader::HDR_TYPE_MSDOS)
 		{
 			m_MachineType = tLzxArchiveHeader::HDR_TYPE_MSDOS;
 		}
@@ -719,10 +736,12 @@ protected:
 		}
 	}
 
-	// this fucker changes pointer for position -> must access in larger scope..
+	// this fucker changes pointer for position -> must access in larger scope, use member-pointer..
 	void copy_decrunch_string(unsigned int &last_offset, unsigned int &count)
 	{
-		unsigned char *string = (m_pDecrunchData + last_offset < destination) ?
+		unsigned char *pDecrunchBegin = m_pDecrunchBuffer->GetBegin();
+		
+		unsigned char *string = (pDecrunchBegin + last_offset < destination) ?
 				destination - last_offset : 
 				destination + 65536 - last_offset;
 
@@ -738,19 +757,19 @@ protected:
 	CReadBuffer *m_pReadBuffer;
 	CReadBuffer *m_pDecrunchBuffer;
 
-	// temp, remove later
-	unsigned char *m_pReadData;
-	unsigned char *m_pDecrunchData;
-
 public:
 	// these need to be public for now..
 	// TODO: cleanup
 
+	// positions in read-buffer
 	unsigned char *source;
-	unsigned char *destination;
 	unsigned char *source_end;
+	// positions in decrunch-buffer
+	unsigned char *destination;
 	unsigned char *destination_end;
 
+	// this is accessed so that decrunched data 
+	// can be written to file from buffer
 	unsigned char *m_pos;
 	
 
@@ -760,9 +779,7 @@ public:
 	void setup_buffers_for_decode(CReadBuffer *pReadBuffer, CReadBuffer *pDecrunchBuffer)
 	{
 		m_pReadBuffer = pReadBuffer;
-		m_pReadData = pReadBuffer->GetBegin();
 		m_pDecrunchBuffer = pDecrunchBuffer;
-		m_pDecrunchData = pDecrunchBuffer->GetBegin();
 
 		::memset(offset_len, 0, sizeof(unsigned char)*8);
 		::memset(literal_len, 0, sizeof(unsigned char)*768);
@@ -771,8 +788,8 @@ public:
 		source = pReadBuffer->GetAt(16384);
 		source_end = pReadBuffer->GetAt(16384 - 1024);
 		destination = pDecrunchBuffer->GetAt(258 + 65536);
+		
 		destination_end = destination;
-
 		m_pos = destination;
 	}
 
@@ -789,15 +806,17 @@ public:
 	unsigned char *move_overrun_on_exhaust(unsigned int &count)
 	{
 		/* copy the remaining overrun to the start of the buffer */
-		count = (m_pReadData - source) + 16384; // size before moving
+		
+		unsigned char *pBegin = m_pReadBuffer->GetBegin();
+		count = (pBegin - source) + 16384; // size before moving
 		if (count > 0)
 		{
-			::memmove(m_pReadData, source, count);
+			::memmove(pBegin, source, count);
 		}
 
-		unsigned char *pEnd = m_pReadData + count;
-		source = m_pReadData;
-		count = (source - pEnd) + 16384; // size after moving
+		unsigned char *pEnd = m_pReadBuffer->GetAt(count);
+		count = (pBegin - pEnd) + 16384; // size after moving
+		source = pBegin;
 		return pEnd;
 	}
 	
@@ -816,7 +835,8 @@ public:
 
 		decrunch(control, shift, last_offset, decrunch_method);
 
-		// return count: how much was decrunched
+		// return count: how much was decrunched 
+		// (where we are after decrunching)
 		return (destination - ptempdest);
 	}
 
@@ -832,32 +852,39 @@ public:
 	unsigned int unpack(unsigned int &decrunch_length)
 	{
 		unsigned int count = 0;
+		unsigned char *pDecrunchBegin = m_pDecrunchBuffer->GetBegin();
 		
 		/* unpack some data */
-		if (destination >= m_pDecrunchData + 258 + 65536)
+		if (destination >= (pDecrunchBegin + 258 + 65536))
 		{
-			count = (destination - m_pDecrunchData) - 65536;
+			count = (destination - pDecrunchBegin) - 65536;
 			if (count)
 			{
-				destination = m_pDecrunchData;
-				
-				unsigned char *temp = destination + 65536;
-				/* copy the overrun to the start of the buffer */
-				// note: in theory could replace loop with
-				// ::memcpy(destination, temp, count);
-				// but may overlap memory areas so can't use memcpy()..
-				do
-				{
-					*destination++ = *temp++;
-				} while(--count);
+				// copy the overrun to the start of the buffer 
+				//
+				// simplified, memmove() should support overlap anyway
+				// (should not be issue here..)
+				//
+				::memmove(pDecrunchBegin, 
+						  m_pDecrunchBuffer->GetAt(65536), 
+						  count);
+
+				// reget pointer to position
+				destination = m_pDecrunchBuffer->GetAt(count);
 			}
 			m_pos = destination;
 		}
 		
+		// note: can we be sure destination is always 
+		// beginning of decrunch-buffer in this case?
+		// could simplify and reduce some pointers..
+		// 
+		//destination_end = m_pDecrunchBuffer->GetAt(decrunch_length);
+		//
 		destination_end = destination + decrunch_length;
-		if (destination_end > m_pDecrunchData + 258 + 65536)
+		if (destination_end > m_pDecrunchBuffer->GetAt(258 + 65536))
 		{
-			destination_end = m_pDecrunchData + 258 + 65536;
+			destination_end = m_pDecrunchBuffer->GetAt(258 + 65536);
 		}
 		
 		return count;

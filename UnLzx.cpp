@@ -436,7 +436,6 @@ void CUnLzx::OpenArchiveFile(CAnsiFile &ArchiveFile)
 	}
 }
 
-//bool CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffset, CArchiveEntry &Entry)
 CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffset)
 {
 	// zeroize buffer
@@ -633,7 +632,12 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &
 				throw IOException("FWrite(Out)");
 			}
 
+			// count bytes remaining to be unpacked
 			unpack_size -= decrunchedsize;
+			
+			// update Decoder.m_pos to new position after 
+			// writing decrunched data to file
+			//
 			m_Decoder.update_pos(decrunchedsize);
 
 		} // while (unpack_size > 0)
@@ -785,34 +789,19 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 			continue;
 		}
 
-		//long lOffset = 0;
 		std::vector<CArchiveEntry*> vEntryList;
 		if (pEntry->m_bIsMerged == true)
 		{
 			// merged-files group compression..
 			CMergeGroup *pGroup = pEntry->m_pGroup;
-			/*
-			if (ArchiveFile.Seek(pGroup->m_lGroupOffset, SEEK_SET) == false)
-			{
-				throw IOException("FSeek(Data): failed to seek merge-group start");
-			}
-			*/
 			vEntryList = pGroup->m_MergedList;
 			m_pack_size = pGroup->m_ulGroupPackedSize;
-			//lOffset = pGroup->m_pHead->m_lDataOffset;
 		}
 		else
 		{
 			// single-file compression..
-			/*
-			if (ArchiveFile.Seek(pEntry->m_lEntryOffset, SEEK_SET) == false)
-			{
-				throw IOException("FSeek(Data): failed to seek merge-group start");
-			}
-			*/
 			vEntryList.push_back(pEntry);
 			m_pack_size = pEntry->m_ulPackedSize;
-			//lOffset = pEntry->m_lDataOffset;
 		}
 
 		if (pEntry->m_ulPackedSize)

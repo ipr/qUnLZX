@@ -10,6 +10,10 @@ namespace Ui {
     class MainWindow;
 }
 
+class CMergeGroup;
+class CArchiveEntry;
+
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -31,10 +35,17 @@ private:
 	//
 	QMap<QString, QTreeWidgetItem*> m_PathToItem;
 	
+	// for merge-group display
+	QMap<CMergeGroup*, QTreeWidgetItem*> m_GroupToItem;
+	QMap<CArchiveEntry*, QTreeWidgetItem*> m_EntryToItem;
+	
 	//QString GetPath(const QString &szName);
 	bool SplitPathFileName(const QString &szName, QString &szPath, QString &szFile);
 	
 	void ClearAll();
+
+	void EntryToViewItem(QString &szFile, CArchiveEntry *pEntry, QTreeWidgetItem *pSubItem);
+	
 
 private slots:
     void on_actionExtractAll_triggered();
