@@ -195,6 +195,17 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 			}
 			*/
 
+			/*
+			// empty "store-only" file?
+			// -> some cases have this for directory-entry..
+			if (pEntry->m_ulUnpackedSize == 0
+				&& pEntry->m_PackMode == tLzxArchiveHeader::HDR_PACK_STORE)
+			{
+				++it;
+				continue;
+			}
+			*/
+
 			QString szPath;
 			QString szFile;
 			QString szName = QString::fromStdString(pEntry->m_szFileName);
