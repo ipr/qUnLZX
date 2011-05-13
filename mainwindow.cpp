@@ -34,6 +34,7 @@ MainWindow::MainWindow(QWidget *parent) :
 			<< "Pack Mode" 
 			<< "CRC (A)" 
 			<< "CRC (D)" 
+			<< "Machine" 
 			<< "Comment";
 	ui->treeWidget->setColumnCount(treeHeaders.size());
 	ui->treeWidget->setHeaderLabels(treeHeaders);
@@ -134,7 +135,8 @@ void MainWindow::on_actionExtractAll_triggered()
 	try
 	{
 		CUnLzx ul(m_szCurrentArchive.toStdString());
-		ul.Extract(szDestPath.toStdString());
+		ul.SetExtractPath(szDestPath.toStdString());
+		ul.Extract();
 		
 		QString szOldMessage = ui->statusBar->currentMessage();
 		ui->statusBar->showMessage("Extract completed!", 10000);
@@ -157,10 +159,20 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 		CUnLzx ul(szArchiveFile.toStdString());
 		if (ul.View() == true)
 		{
-			ul.GetEntryList(lstArchiveInfo);
+			QString szMessage;
+			szMessage.append(" Total files in archive: ").append(QString::number(ul.GetTotalFileCount()))
+					.append(" Total unpacked size: ").append(QString::number(ul.GetTotalSizeUnpacked()))
+					.append(" Archive file size: ").append(QString::number(ul.GetArchiveFileSize()));
+			ui->statusBar->showMessage(szMessage);
 		}
+		else
+		{
+			ui->statusBar->showMessage(QString("Warning: errors in listing contents"));
+		}
+		// show what we can
+		ul.GetEntryList(lstArchiveInfo);
 		
-		// success: keep some info
+		// show some some info in window title too
 		setWindowTitle(m_szBaseTitle + " - " + szArchiveFile);
 		m_szCurrentArchive = szArchiveFile;
 		
@@ -168,7 +180,7 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 		auto itEnd = lstArchiveInfo.end();
 		while (it != itEnd)
 		{
-			CArchiveEntry &Entry = it->second;
+			CArchiveEntry &Entry = (*(it->second));
 			
 			// skip "merge" instances (if any)
 			if (Entry.m_szFileName.length() < 1)
@@ -249,7 +261,7 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 			pSubItem->setText(5, szAttribs);
 			
 			// packing mode
-			pSubItem->setText(6, QString::number(Entry.m_Header.GetPackMode()));
+			pSubItem->setText(6, QString::number((int)Entry.m_PackMode));
 			
 			QString szCrcA; // CRC of entry in archive
 			szCrcA.sprintf("%x", Entry.m_uiCrc);
@@ -258,24 +270,21 @@ void MainWindow::onFileSelected(QString szArchiveFile)
 			QString szCrcD; // CRC of data
 			szCrcD.sprintf("%x", Entry.m_uiDataCrc);
 			pSubItem->setText(8, szCrcD);
+
+			// machine-type enum
+			pSubItem->setText(9, QString::number((int)Entry.m_MachineType));
 			
 			// file-related comment (if any stored)
-			pSubItem->setText(9, QString::fromStdString(Entry.m_szComment));
+			pSubItem->setText(10, QString::fromStdString(Entry.m_szComment));
 			
 			pTopItem->addChild(pSubItem);
 			
 			++it;
 		}
 		
-		QString szMessage;
-		szMessage.append(" Total files in archive: ").append(QString::number(ul.GetTotalFileCount()))
-				.append(" Total unpacked size: ").append(QString::number(ul.GetTotalSizeUnpacked()))
-				.append(" Archive file size: ").append(QString::number(ul.GetArchiveFileSize()));
-
 		ui->treeWidget->expandAll();
 		ui->treeWidget->resizeColumnToContents(0);
 		ui->treeWidget->sortByColumn(0);
-		ui->statusBar->showMessage(szMessage);
 	}
 	catch (std::exception &exp)
 	{

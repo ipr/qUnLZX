@@ -9,8 +9,9 @@
 // unlzx.c 1.1 (03.4.01, Erik Meusel)
 //
 
-#include "stdafx.h"
+//#include "stdafx.h"
 #include "UnLzx.h"
+
 
 // pre-created decoding tables
 const unsigned char CLzxDecoder::table_one[32]=
@@ -431,7 +432,7 @@ void CUnLzx::OpenArchiveFile(CAnsiFile &ArchiveFile)
 
 	if (m_InfoHeader.IsLzx() == false)
 	{
-		throw ArcException("Info_Header: Bad ID", m_szArchive);
+		throw ArcException("Info_Header: Bad ID, not supported LZX", m_szArchive);
 	}
 }
 
@@ -451,7 +452,8 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	}
 
 	CArchiveEntry *pEntry = new CArchiveEntry(lOffset, pBuf, 31);
-	pEntry->m_lEntryOffset += 31; // increment for data pos
+	pEntry->m_lDataOffset += 31; // increment for data pos
+	pEntry->m_lHeaderDataSize += 31; // add to read size
 
 	// temp for counting crc-checksum of entry-header,
 	// verify by counting that crc in file is same
@@ -470,7 +472,8 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	{
 		throw IOException("Failed reading string: filename");
 	}
-	pEntry->m_lEntryOffset += uiStringLen; // increment for data pos
+	pEntry->m_lDataOffset += uiStringLen; // increment for data pos
+	pEntry->m_lHeaderDataSize += uiStringLen; // add to read size
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
 	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
@@ -482,7 +485,8 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	{
 		throw IOException("Failed reading string: comment");
 	}
-	pEntry->m_lEntryOffset += uiStringLen; // increment for data pos
+	pEntry->m_lDataOffset += uiStringLen; // increment for data pos
+	pEntry->m_lHeaderDataSize += uiStringLen; // add to read size
 
 	pBuf[uiStringLen] = 0;                 // null-terminate
 	CrcSum.crc_calc(pBuf, uiStringLen);    // update CRC
@@ -495,15 +499,22 @@ CArchiveEntry *CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, const long lOffse
 	{
 		// critical error 
 		// -> throw exception (cleanup first)
-		delete pEntry;
-		throw ArcException("CRC: Entry Header", pEntry->m_szFileName);
+		if (m_bAllowBadCrc == false)
+		{
+			delete pEntry;
+			throw ArcException("CRC: Entry Header", pEntry->m_szFileName);
+		}
+		else
+		{
+			// emit error("CRC: Entry Header");
+		}
 	}
 
 	// parse some entry-header information for later processing
 	pEntry->ParseHeader();
 	
 	// keep this entry
-	m_EntryList.insert(tArchiveEntryList::value_type(pEntry->m_lEntryOffset, pEntry));
+	m_EntryList.insert(tArchiveEntryList::value_type(pEntry->m_lHeaderOffset, pEntry));
 
 	// entry header read successfully
 	return pEntry;
@@ -640,7 +651,16 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &
 		//
 		if (CrcSum.GetSum() != pEntry->m_uiDataCrc)
 		{
-			throw ArcException("CRC: Entry Data", pEntry->m_szFileName);
+			// unless user has enabled "skip crc" we throw exception here
+			if (m_bAllowBadCrc == false)
+			{
+				throw ArcException("CRC: Entry Data", pEntry->m_szFileName);
+			}
+			else
+			{
+				// log, don't abort
+				// emit error("CRC: Entry Header");
+			}
 		}
 
 		// extracted
@@ -734,7 +754,16 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile, std::vector<CArchiveEntry*> &v
 		//
 		if (CrcSum.GetSum() != pEntry->m_uiDataCrc)
 		{
-			throw ArcException("CRC: Entry Data", pEntry->m_szFileName);
+			// unless user has enabled "skip crc" we throw exception here
+			if (m_bAllowBadCrc == false)
+			{
+				throw ArcException("CRC: Entry Data", pEntry->m_szFileName);
+			}
+			else
+			{
+				// log, don't abort
+				// emit error("CRC: Entry Header");
+			}
 		}
 
 		++itEntry;
@@ -756,6 +785,7 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 			continue;
 		}
 
+		//long lOffset = 0;
 		std::vector<CArchiveEntry*> vEntryList;
 		if (pEntry->m_bIsMerged == true)
 		{
@@ -768,7 +798,8 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 			}
 			*/
 			vEntryList = pGroup->m_MergedList;
-			m_pack_size = pGroup->m_ulMergeSize;
+			m_pack_size = pGroup->m_ulGroupPackedSize;
+			//lOffset = pGroup->m_pHead->m_lDataOffset;
 		}
 		else
 		{
@@ -781,16 +812,18 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 			*/
 			vEntryList.push_back(pEntry);
 			m_pack_size = pEntry->m_ulPackedSize;
+			//lOffset = pEntry->m_lDataOffset;
 		}
 
 		if (pEntry->m_ulPackedSize)
 		{
 			bool bRet = false;
-			//m_pack_size = pEntry->m_ulPackedSize;
+			long lOffset = pEntry->m_lDataOffset; // should be the first..
+			m_pack_size = pEntry->m_ulPackedSize;
 
 			// note: unpacking is very sensitive to file-position,
 			// try to improve metadata to locate correctly when necessary..
-			if (ArchiveFile.Seek(pEntry->m_lEntryOffset, SEEK_SET) == false)
+			if (ArchiveFile.Seek(lOffset, SEEK_SET) == false)
 			{
 				throw IOException("FSeek(Data): failed to seek merge-group start");
 			}
@@ -807,9 +840,15 @@ bool CUnLzx::ExtractArchive(CAnsiFile &ArchiveFile)
 				break;
 
 			default: /* unknown */
-				throw IOException("Extract: unknown pack mode");
-				// -> skip ?
-				//ArchiveFile.Seek(pEntry->m_ulPackedSize, SEEK_CUR);
+				if (m_bSkipUnknownPackMode == false)
+				{
+					throw IOException("Extract: unknown pack mode");
+				}
+				else
+				{
+					// -> skip ?
+					//ArchiveFile.Seek(pEntry->m_ulPackedSize, SEEK_CUR);
+				}
 				break;
 			}
 		}
@@ -848,38 +887,44 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 		// count some statistical information
 		AddCounters(*pEntry);
 
-		if (pEntry->m_bIsMerged == true
-			&& m_ulMergeSize == 0)
+		// track some info in merge-groups..
+		if (pEntry->m_bIsMerged == true)
 		{
-			// entry starts merge-group?
-			m_GroupList.insert(tMergeGroupList::value_type(lEntryOffset, new CMergeGroup(lEntryOffset)));
-			auto itGroup = m_GroupList.find(lEntryOffset);
-			CMergeGroup *pGroup = itGroup->second;
-			pEntry->SetGroup(pGroup);
-		}
-		else if (pEntry->m_bIsMerged == true)
-		{
-			// get latest merge-group for addition
-			auto itGroup = m_GroupList.rbegin();
-			CMergeGroup *pGroup = itGroup->second;
-			pEntry->SetGroup(pGroup);
-		}
+			if (m_ulMergeSize == 0)
+			{
+				// entry starts merge-group?
+				m_GroupList.insert(tMergeGroupList::value_type(lEntryOffset, new CMergeGroup(lEntryOffset)));
+				auto itGroup = m_GroupList.find(lEntryOffset);
+				CMergeGroup *pGroup = itGroup->second;
+				pEntry->SetGroup(pGroup);
+			}
+			else
+			{
+				// get latest merge-group for addition
+				auto itGroup = m_GroupList.rbegin();
+				CMergeGroup *pGroup = itGroup->second;
 
-		m_ulMergeSize += pEntry->m_ulUnpackedSize;
+				// add linkage
+				if (pGroup->m_MergedList.size() > 0)
+				{
+					pEntry->m_pPreviousEntry = pGroup->m_MergedList.back();
+					pEntry->m_pPreviousEntry->m_pNextEntry = pEntry;
+				}
+				pEntry->SetGroup(pGroup);
+			}
+			m_ulMergeSize += pEntry->m_ulUnpackedSize;
 
-		// flag: merged == true,
-		// packed size given -> end of merge-group?
-		if (pEntry->m_bIsMerged == true
-			&& pEntry->m_ulPackedSize)
-		{
-			// end of merge-group, merged size in m_ulMergeSize
-			//pGroup->m_ulMergeSize = m_ulMergeSize;
-			auto itGroup = m_GroupList.rbegin();
-			CMergeGroup *pGroup = itGroup->second;
-			pEntry->SetGroup(pGroup);
-
-			pGroup->m_ulMergeSize = m_ulMergeSize;
-			m_ulMergeSize = 0; // reset counter (end of merge-group)
+			// flag: merged == true,
+			// packed size given -> end of merge-group?
+			if (pEntry->m_ulPackedSize)
+			{
+				// end of merge-group, merged size in m_ulMergeSize
+				auto itGroup = m_GroupList.rbegin();
+				CMergeGroup *pGroup = itGroup->second;
+				pGroup->m_ulGroupUnpackedSize = m_ulMergeSize;
+				pGroup->m_ulGroupPackedSize = pEntry->m_ulPackedSize;
+				m_ulMergeSize = 0; // reset counter (end of merge-group)
+			}
 		}
 
 		/* seek past the packed data */
@@ -909,23 +954,14 @@ bool CUnLzx::View()
 	return ViewArchive(ArchiveFile);
 }
 
-bool CUnLzx::GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const
+// list contents
+//
+// note: user must NOT destroy the objects which have pointers in the list,
+// the objects are destroyed by this class.
+//
+bool CUnLzx::GetEntryList(tArchiveEntryList &lstArchiveInfo) const
 {
-	auto it = m_EntryList.cbegin();
-	auto itEnd = m_EntryList.cend();
-	while (it != itEnd)
-	{
-		CArchiveEntry *pEntry = it->second;
-
-		/*
-		lstArchiveInfo.push_back(CArchiveEntry());
-		CArchiveEntry &Entry = lstArchiveInfo.back();
-		Entry = (*pEntry);
-		*/
-
-
-		++it;
-	}
+	lstArchiveInfo = m_EntryList;
 	return true;
 }
 

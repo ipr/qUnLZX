@@ -9,7 +9,7 @@
 // unlzx.c 1.1 (03.4.01, Erik Meusel)
 //
 
-#include "stdafx.h"
+//#include "stdafx.h"
 #include "CrcSum.h"
 
 const unsigned int CRCSum::m_crc_table[256] =

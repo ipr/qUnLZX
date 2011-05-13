@@ -339,15 +339,19 @@ class CMergeGroup
 public:
 	CMergeGroup(void) 
 		: m_MergedList()
+		, m_pHead(nullptr)
 		, m_lGroupOffset(0)
-		//, m_ulGroupUnpackedSize(0)
-		, m_ulMergeSize(0)
+		, m_ulGroupUnpackedSize(0)
+		, m_ulGroupPackedSize(0)
+		//, m_ulMergeSize(0)
 	{};
 	CMergeGroup(const long lOffset) 
 		: m_MergedList()
+		, m_pHead(nullptr)
 		, m_lGroupOffset(lOffset)
-		//, m_ulGroupUnpackedSize(0)
-		, m_ulMergeSize(0)
+		, m_ulGroupUnpackedSize(0)
+		, m_ulGroupPackedSize(0)
+		//, m_ulMergeSize(0)
 	{};
 	~CMergeGroup(void) 
 	{
@@ -359,15 +363,22 @@ public:
 	typedef std::vector<CArchiveEntry*> tMergedList;
 	tMergedList m_MergedList;
 
+	// head-node
+	CArchiveEntry *m_pHead;
+
 	// offset in archive file
 	// to beginning of this group of merged files.
 	long m_lGroupOffset;
 	
 	// total size of group when unpacked (sum of file sizes)
-	//unsigned long m_ulGroupUnpackedSize;
+	unsigned long m_ulGroupUnpackedSize;
+
+	// total group packed size in archive
+	unsigned long m_ulGroupPackedSize;
 
 	// merged data size in archive
-	unsigned long m_ulMergeSize;
+	//unsigned long m_ulMergeSize;
+
 
 	// add entry as member of this group
 	// note: merged files need to extracted in-order
@@ -375,6 +386,11 @@ public:
 	// -> caller should get ordered list (as found)
 	void SetEntry(CArchiveEntry *pEntry)
 	{
+		if (m_MergedList.size() == 0)
+		{
+			m_pHead = pEntry;
+		}
+
 		auto it = m_MergedList.begin();
 		auto itEnd = m_MergedList.end();
 		while (it != itEnd)
@@ -395,7 +411,9 @@ class CArchiveEntry
 {
 public:
 	CArchiveEntry(const long lEntryOffset, const unsigned char *pArcHeader, const size_t nArchSize)
-		: m_lEntryOffset(lEntryOffset)
+		: m_lHeaderOffset(lEntryOffset)
+		, m_lHeaderDataSize(0)
+		, m_lDataOffset(lEntryOffset)
 		, m_Header()
 		, m_Attributes()
 		, m_Timestamp()
@@ -407,6 +425,8 @@ public:
 		, m_ulUnpackedSize(0)
 		, m_bPackedSizeAvailable(true)
 		, m_ulPackedSize(0)
+		, m_pPreviousEntry(nullptr)
+		, m_pNextEntry(nullptr)
 		, m_pGroup(nullptr)
 		, m_bIsExtracted(false)
 		, m_szFileName()
@@ -490,9 +510,11 @@ public:
 		pGroup->SetEntry(this);
 	}
 
-	// offset in archive file
-	// to beginning of this files.
-	long m_lEntryOffset;
+	// offsets in archive file
+	// for this entry
+	long m_lHeaderOffset; // start of header
+	long m_lHeaderDataSize; // size of header data
+	long m_lDataOffset; // offset of data
 
 	// entry header from archive
 	tLzxArchiveHeader m_Header;
@@ -510,6 +532,8 @@ public:
 	tLzxArchiveHeader::tHeaderPackMode m_PackMode;
 
 	// if file is merged with another
+	// (packing size may be zero/not available
+	// for individual files, just merged size)
 	bool m_bIsMerged;
 	
 
@@ -529,8 +553,12 @@ public:
 	// compressed size from file
 	unsigned long m_ulPackedSize;
 
-	// merge group this belongs to (if any)
-	CMergeGroup *m_pGroup;
+	// some stuff for diagnostics&debugging
+	// of merge-group handling, may be useful later..
+	//
+	CArchiveEntry *m_pPreviousEntry; // previous file-entry (when merged)
+	CArchiveEntry *m_pNextEntry; // next file-entry (when merged)
+	CMergeGroup *m_pGroup; // merge group this belongs to (if any)
 
 	// is file already extracted
 	// TODO: this is quick hack, 
@@ -705,13 +733,6 @@ protected:
 		} while(--count);
 	}
 
-	//unsigned int unpack_size;
-	//unsigned int pack_size;
-	
-	//unsigned int m_last_offset;
-	//unsigned int m_global_control; /* initial control word */
-	//int m_global_shift;
-
 	CReadBuffer *m_pReadBuffer;
 	CReadBuffer *m_pDecrunchBuffer;
 
@@ -721,6 +742,8 @@ protected:
 
 public:
 	// these need to be public for now..
+	// TODO: cleanup
+
 	unsigned char *source;
 	unsigned char *destination;
 	unsigned char *source_end;
@@ -876,12 +899,21 @@ private:
 	// (may change on each extract() call..)
 	std::string m_szExtractionPath;
 
+	// actual decoding/decrunching routines
 	CLzxDecoder m_Decoder;
 	
 	// current sizes for extraction
 	// (need to share for merged groups)
 	unsigned int m_pack_size;
 	//unsigned int m_unpack_size;
+
+	// for corrupted archives, just try to extract what we can:
+	// user must enable this option, otherwise aborted with exception
+	bool m_bAllowBadCrc;
+
+	// if archive has unknown (unsupported) packing mode,
+	// try to skip those: user must enable or aborted with exception
+	bool m_bSkipUnknownPackMode;
 
 	// decrunch&decode related status values
 	unsigned int m_decrunch_method;
@@ -899,7 +931,6 @@ private:
 		// add some statistical information
 		m_ulTotalPacked += Entry.m_ulPackedSize;
 		m_ulTotalUnpacked += Entry.m_ulUnpackedSize;
-		//m_ulMergeSize += Entry.m_ulUnpackedSize;
 		m_ulTotalFiles++;
 	}
 	void ResetCounters()
@@ -950,6 +981,7 @@ protected:
 
 public:
 	// options for extraction (some for viewing?)
+	/*
 	class CUnLzxOptions
 	{
 		bool m_bKeepAttributes;		// keep file-attribs (set on output-file)
@@ -965,6 +997,7 @@ public:
 		//std::string m_szPattern; // pattern-match to files (extract matching)
 		//std::string m_szWorkPath; // set working path
 	};
+	*/
 
 	CUnLzx(const std::string &szArchive)
 		: m_szArchive(szArchive)
@@ -984,13 +1017,35 @@ public:
 		, m_ulTotalPacked(0)
 		, m_ulTotalFiles(0)
 		, m_ulMergeSize(0)
+		, m_bAllowBadCrc(false)
+		, m_bSkipUnknownPackMode(false)
 	{
-
 	}
 
 	~CUnLzx(void)
 	{
 		ClearItems();
+	}
+
+	// For corrupted archives, just try to extract what we can:
+	// user must enable this option, otherwise aborted with exception.
+	// 
+	// Note: other exceptions may be thrown if decrunch-tables can't be made
+	// (only choice is to skip entire merge-group in those cases).
+	//
+	// Usual cause may be broken setpatch on some cases (wrong version?)
+	// and only fix would be to repack all again..
+	//
+	void SetAllowBadCrc(const bool bValue)
+	{
+		m_bAllowBadCrc = bValue;
+	}
+
+	// if archive has unknown (unsupported) packing mode,
+	// try to skip those: user must enable or aborted with exception
+	void SetSkipUnknownPackMode(const bool bValue)
+	{
+		m_bSkipUnknownPackMode = bValue;
 	}
 
 	// view a single archive:
@@ -999,7 +1054,12 @@ public:
 	//
 	bool View();
 
-	bool GetEntryList(std::vector<CArchiveEntry> &lstArchiveInfo) const;
+	// list contents
+	//
+	// note: user must NOT destroy the objects which have pointers in the list,
+	// the objects are destroyed by this class.
+	//
+	bool GetEntryList(tArchiveEntryList &lstArchiveInfo) const;
 
 	// extract a single archive:
 	// give path where files are extracted to,

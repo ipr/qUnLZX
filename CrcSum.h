@@ -52,7 +52,8 @@ public:
 			unsigned int temp = ~m_sum; /* was (sum ^ 4294967295) */
 			do
 			{
-				temp = m_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
+				temp = m_crc_table[((*memory) ^ temp) & 255] ^ (temp >> 8);
+				memory++;
 			} while(--tmplen);
 			m_sum = ~temp; /* was (temp ^ 4294967295) */
 		}
